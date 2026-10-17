@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capacités par défaut de l'application Petrichor.",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:event:default"]
+}

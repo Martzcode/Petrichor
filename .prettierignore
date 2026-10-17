@@ -1,0 +1,10 @@
+/dist
+/.angular
+/node_modules
+/target
+/src-tauri/target
+/src-tauri/gen
+/src-tauri/icons
+/docs
+/package-lock.json
+LICENSE

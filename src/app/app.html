@@ -1,0 +1,61 @@
+<main class="shell">
+  <header>
+    <h1>{{ title() }}</h1>
+    <p class="subtitle">Personnalisation du bureau Linux par skins</p>
+  </header>
+
+  @if (!ipc.hasBackend()) {
+  <section class="notice">
+    <strong>Mode navigateur.</strong>
+    Le backend Tauri n'est pas détecté — lancez
+    <code>npm run desktop:dev</code>.
+  </section>
+  }
+
+  <section class="panel">
+    <h2>Application</h2>
+    <dl>
+      <dt>Version</dt>
+      <dd>{{ ipc.appVersion() }}</dd>
+      @if (ipc.systemInfo(); as sys) {
+      <dt>Système</dt>
+      <dd>{{ sys.os_name }} {{ sys.os_version }}</dd>
+      <dt>Hôte</dt>
+      <dd>{{ sys.hostname }} ({{ sys.user_name }})</dd>
+      <dt>Uptime</dt>
+      <dd>{{ sys.uptime_secs }} s</dd>
+      }
+    </dl>
+    <div class="actions">
+      <button
+        type="button"
+        (click)="emitDemoEvent()"
+        [disabled]="!ipc.hasBackend()"
+      >
+        Émettre un événement
+      </button>
+      <button
+        type="button"
+        (click)="clearLogs()"
+        [disabled]="!ipc.hasBackend()"
+      >
+        Effacer les logs
+      </button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Journal ({{ logEntries().length }})</h2>
+    <ul class="logs">
+      @for (entry of logEntries(); track $index) {
+      <li [class]="entry.level">
+        <span class="level">{{ entry.level }}</span>
+        <span class="source">{{ entry.source ?? 'petrichor' }}</span>
+        <span class="message">{{ entry.message }}</span>
+      </li>
+      } @empty {
+      <li class="empty">Aucun log pour le moment.</li>
+      }
+    </ul>
+  </section>
+</main>

@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/petrichor-core",
+    "crates/petrichor-sys",
+    "crates/petrichor-plugin",
+    "crates/petrichor-script",
+    "crates/petrichor-compat",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+repository = ""
+authors = ["Petrichor contributors"]
+
+[workspace.dependencies]
+petrichor-core = { path = "crates/petrichor-core" }
+petrichor-sys = { path = "crates/petrichor-sys" }
+petrichor-plugin = { path = "crates/petrichor-plugin" }
+petrichor-script = { path = "crates/petrichor-script" }
+petrichor-compat = { path = "crates/petrichor-compat" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
