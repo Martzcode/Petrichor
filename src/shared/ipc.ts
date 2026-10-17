@@ -176,6 +176,12 @@ export class PetrichorIpc {
     return invoke<Record<string, string>>('read_measures', { path });
   }
 
+  async logBackend(level: LogLevel, message: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('frontend_log', { level, message });
+  }
+
   async openSkinWindow(path: string): Promise<string> {
     if (!this.available()) return 'main';
     const { invoke } = await import('@tauri-apps/api/core');

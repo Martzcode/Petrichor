@@ -6,10 +6,15 @@ import { isTauri } from './shared/ipc';
 
 async function selectRoot() {
   if (isTauri()) {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
-    if (getCurrentWindow().label.startsWith('skin-')) {
-      document.documentElement.classList.add('skin-mode');
-      return SkinView;
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const label = getCurrentWindow().label;
+      if (label !== 'main') {
+        document.documentElement.classList.add('skin-mode');
+        return SkinView;
+      }
+    } catch {
+      return App;
     }
   }
   return App;

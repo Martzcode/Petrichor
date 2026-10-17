@@ -27,6 +27,7 @@ pub fn run() {
             commands::load_skin,
             commands::load_render_model,
             commands::read_measures,
+            commands::frontend_log,
             commands::demo_event,
             windows::open_skin_window,
             windows::close_skin_window,
@@ -45,6 +46,20 @@ pub fn run() {
                 let _ = app.emit(READY_EVENT, entry.clone());
                 let _ = app.emit(LOG_EVENT, entry);
             }
+
+            #[cfg(debug_assertions)]
+            if let Ok(path) = std::env::var("PETRICHOR_OPEN_SKIN") {
+                let state = app.state::<windows::SkinWindows>();
+                match windows::open_window(app.handle(), &state, path.clone().into()) {
+                    Ok(label) => petrichor_core::logging::notice(format!(
+                        "Skin de démonstration {path} ouvert sous {label}"
+                    )),
+                    Err(error) => petrichor_core::logging::error(format!(
+                        "Échec d'ouverture de {path} : {error}"
+                    )),
+                }
+            }
+
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -10,6 +10,8 @@
     Le backend Tauri n'est pas détecté — lancez
     <code>npm run desktop:dev</code>.
   </section>
+  } @if (notice(); as message) {
+  <section class="notice">{{ message }}</section>
   }
 
   <section class="panel">

@@ -144,6 +144,17 @@ pub fn read_measures(path: String) -> BTreeMap<String, String> {
 }
 
 #[tauri::command]
+pub fn frontend_log(level: String, message: String) {
+    let level = match level.to_ascii_lowercase().as_str() {
+        "error" => Level::Error,
+        "warning" => Level::Warning,
+        "debug" => Level::Debug,
+        _ => Level::Notice,
+    };
+    logging::logger().log(level, Some("frontend"), message);
+}
+
+#[tauri::command]
 pub fn demo_event(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Emitter;
 

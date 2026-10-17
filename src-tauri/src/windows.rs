@@ -91,6 +91,11 @@ pub fn open_window(
         skip_taskbar: true,
     });
 
+    petrichor_core::logging::notice(format!(
+        "Ouverture de la fenêtre de skin {label} : {}",
+        path.display()
+    ));
+
     let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title("Petrichor")
         .transparent(true)
@@ -99,13 +104,20 @@ pub fn open_window(
         .skip_taskbar(true)
         .resizable(false)
         .inner_size(200.0, 100.0)
+        .position(100.0, 100.0)
         .visible(false)
         .build();
 
     match window {
-        Ok(_) => Ok(label),
+        Ok(_) => {
+            petrichor_core::logging::debug(format!("Fenêtre {label} créée"));
+            Ok(label)
+        }
         Err(error) => {
             windows.remove(&label);
+            petrichor_core::logging::error(format!(
+                "Échec de création de la fenêtre de skin {label} : {error}"
+            ));
             Err(error.to_string())
         }
     }

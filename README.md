@@ -53,6 +53,13 @@ Depuis l'interface principale, la section **Skins** liste le corpus `skins-demo/
 associé ouvre le skin dans une fenêtre transparente. Chaque skin s'exécute dans sa propre
 fenêtre Tauri sans décor, redimensionnée automatiquement (`DynamicWindowSize`).
 
+En build de développement, la variable `PETRICHOR_OPEN_SKIN` ouvre un skin au démarrage et
+permet de vérifier le rendu sans interaction :
+
+```bash
+PETRICHOR_OPEN_SKIN="$PWD/skins-demo/Clock/Clock.ini" npm run desktop:dev
+```
+
 ## Rendu des skins
 
 Le moteur calcule en Rust un _modèle de rendu_ (`RenderModel`) : options fusionnées avec les

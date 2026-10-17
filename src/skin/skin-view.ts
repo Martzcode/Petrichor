@@ -14,7 +14,7 @@ import { ImageMeter, RenderModel, StringMeter } from '../renderer/skin-model';
 import { PetrichorIpc } from '../shared/ipc';
 
 @Component({
-  selector: 'app-skin-view',
+  selector: 'app-root',
   templateUrl: './skin-view.html',
   styleUrl: './skin-view.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -30,38 +30,64 @@ export class SkinView implements AfterViewInit, OnDestroy {
   private model: RenderModel | null = null;
   private images = new Map<string, HTMLImageElement>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
   private updating = false;
 
   async ngAfterViewInit(): Promise<void> {
     try {
+      this.label = await this.ipc.currentWindowLabel();
+      await this.ipc.logBackend('notice', `SkinView démarré (${this.label})`);
+      this.watchdog = setTimeout(() => void this.showWindow(), 3000);
       await this.run();
     } catch (cause) {
-      this.error.set(cause instanceof Error ? cause.message : String(cause));
+      const message = cause instanceof Error ? cause.message : String(cause);
+      this.error.set(message);
+      await this.ipc.logBackend(
+        'error',
+        `SkinView ${this.label || '?'} : ${message}`,
+      );
+      await this.showWindow();
+    } finally {
+      this.clearWatchdog();
     }
   }
 
   ngOnDestroy(): void {
+    this.clearWatchdog();
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
     }
   }
 
+  private clearWatchdog(): void {
+    if (this.watchdog !== null) {
+      clearTimeout(this.watchdog);
+      this.watchdog = null;
+    }
+  }
+
+  private async showWindow(): Promise<void> {
+    if (!this.label) return;
+    try {
+      await this.ipc.showSkinWindow(this.label);
+    } catch {
+      return;
+    }
+  }
+
   private async run(): Promise<void> {
-    const label = await this.ipc.currentWindowLabel();
+    const label = this.label;
     const info = await this.ipc.skinWindowInfo(label);
     if (!info) {
-      this.error.set(`Fenêtre de skin inconnue : ${label}`);
-      return;
+      throw new Error(`Fenêtre de skin inconnue : ${label}`);
     }
 
     const result = await this.ipc.loadRenderModel(info.path);
     if (!result) {
-      this.error.set('Backend Petrichor indisponible.');
-      return;
+      throw new Error('Backend Petrichor indisponible.');
     }
 
-    this.label = label;
     this.path = info.path;
     this.model = result.model;
 
@@ -73,7 +99,11 @@ export class SkinView implements AfterViewInit, OnDestroy {
     if (result.model.dynamic_window_size) {
       await this.ipc.fitSkinWindow(label, layout.width, layout.height);
     }
-    await this.ipc.showSkinWindow(label);
+    await this.ipc.logBackend(
+      'notice',
+      `Skin ${result.model.name} rendu (${layout.width}×${layout.height})`,
+    );
+    await this.showWindow();
 
     this.startUpdates(result.model.update_ms);
   }

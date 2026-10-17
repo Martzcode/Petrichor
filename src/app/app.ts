@@ -18,6 +18,7 @@ export class App implements OnInit {
   protected readonly title = signal('Petrichor');
   protected readonly logEntries = signal<LogEntry[]>([]);
   protected readonly skins = signal<SkinFolder[]>([]);
+  protected readonly notice = signal<string | null>(null);
 
   async ngOnInit(): Promise<void> {
     if (!this.ipc.hasBackend()) {
@@ -47,9 +48,22 @@ export class App implements OnInit {
   }
 
   protected async openSkin(path: string): Promise<void> {
-    await this.ipc.openSkinWindow(path);
-    await this.ipc.refreshLogs();
-    this.logEntries.set(this.ipc.logEntries());
+    this.notice.set(null);
+    try {
+      const label = await this.ipc.openSkinWindow(path);
+      await this.ipc.refreshLogs();
+      this.logEntries.set(this.ipc.logEntries());
+      this.notice.set(`Fenêtre « ${label} » demandée pour ${path}`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      this.notice.set(`Échec de l'ouverture du skin : ${message}`);
+      await this.ipc.logBackend(
+        'error',
+        `Ouverture du skin échouée : ${message}`,
+      );
+      await this.ipc.refreshLogs();
+      this.logEntries.set(this.ipc.logEntries());
+    }
   }
 
   private async refreshSkins(): Promise<void> {
