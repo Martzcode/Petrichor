@@ -45,6 +45,24 @@
   </section>
 
   <section class="panel">
+    <h2>Skins</h2>
+    <ul class="skins">
+      @for (folder of skins(); track folder.path) {
+      <li>
+        <span class="skin-name">{{ folder.name }}</span>
+        @for (file of folder.files; track file.path) {
+        <button type="button" (click)="openSkin(file.path)">
+          {{ file.filename }}
+        </button>
+        }
+      </li>
+      } @empty {
+      <li class="empty">Aucun skin détecté.</li>
+      }
+    </ul>
+  </section>
+
+  <section class="panel">
     <h2>Journal ({{ logEntries().length }})</h2>
     <ul class="logs">
       @for (entry of logEntries(); track $index) {

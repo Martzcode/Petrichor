@@ -15,3 +15,10 @@ body {
   background: #12151a;
   color: #e6edf3;
 }
+
+html.skin-mode,
+html.skin-mode body {
+  background: transparent;
+  overflow: hidden;
+  color-scheme: normal;
+}

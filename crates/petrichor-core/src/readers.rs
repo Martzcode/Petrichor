@@ -221,10 +221,10 @@ pub fn try_read_color(value: &str) -> ReadResult<Color> {
             255,
         )),
         8 => Ok(Color::new(
+            parse_pair(&hex[0..2])?,
             parse_pair(&hex[2..4])?,
             parse_pair(&hex[4..6])?,
             parse_pair(&hex[6..8])?,
-            parse_pair(&hex[0..2])?,
         )),
         _ => Err(ReadError::new(format!(
             "longueur de couleur hexadécimale invalide: « {trimmed} »"
@@ -351,7 +351,7 @@ mod tests {
             Color::new(255, 136, 0, 255)
         );
         assert_eq!(
-            try_read_color("0x80FF8800").unwrap(),
+            try_read_color("0xFF880080").unwrap(),
             Color::new(255, 136, 0, 128)
         );
         assert_eq!(

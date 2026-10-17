@@ -126,3 +126,24 @@ button:disabled {
 .empty {
   color: #7d8894;
 }
+
+.skins {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.skins li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.skin-name {
+  min-width: 6rem;
+  color: #c9d3dd;
+}

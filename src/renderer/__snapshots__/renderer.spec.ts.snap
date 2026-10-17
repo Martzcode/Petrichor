@@ -1,0 +1,49 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderSkin > matches the reference draw list 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      100,
+      34,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      100,
+      34,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [
+      "CPU",
+      2,
+      2,
+    ],
+    "method": "fillText",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+  {
+    "args": [
+      0,
+      24,
+      75,
+      10,
+    ],
+    "method": "fillRect",
+  },
+]
+`;

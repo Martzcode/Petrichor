@@ -5,7 +5,7 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { LogEntry, PetrichorIpc } from '../shared/ipc';
+import { LogEntry, PetrichorIpc, SkinFolder } from '../shared/ipc';
 
 @Component({
   selector: 'app-root',
@@ -17,6 +17,7 @@ export class App implements OnInit {
   protected readonly ipc = inject(PetrichorIpc);
   protected readonly title = signal('Petrichor');
   protected readonly logEntries = signal<LogEntry[]>([]);
+  protected readonly skins = signal<SkinFolder[]>([]);
 
   async ngOnInit(): Promise<void> {
     if (!this.ipc.hasBackend()) {
@@ -31,6 +32,8 @@ export class App implements OnInit {
     await this.ipc.onLog((entry) => {
       this.logEntries.update((entries) => [...entries, entry]);
     });
+
+    await this.refreshSkins();
   }
 
   protected async clearLogs(): Promise<void> {
@@ -41,5 +44,18 @@ export class App implements OnInit {
   protected async emitDemoEvent(): Promise<void> {
     await this.ipc.emitDemoEvent();
     this.logEntries.set(this.ipc.logEntries());
+  }
+
+  protected async openSkin(path: string): Promise<void> {
+    await this.ipc.openSkinWindow(path);
+    await this.ipc.refreshLogs();
+    this.logEntries.set(this.ipc.logEntries());
+  }
+
+  private async refreshSkins(): Promise<void> {
+    const root = await this.ipc.defaultSkinRoot();
+    if (!root) return;
+    const registry = await this.ipc.scanSkins(root);
+    this.skins.set(registry.folders);
   }
 }

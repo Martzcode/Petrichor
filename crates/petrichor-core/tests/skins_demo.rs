@@ -48,6 +48,8 @@ fn resolves_included_styles_in_demo() {
     let (skin, diagnostics) = build_skin(&file.path);
 
     assert!(!diagnostics.has_errors(), "{:?}", diagnostics.items);
+    assert_eq!(skin.metadata.name.as_deref(), Some("Moniteur"));
+    assert!(skin.settings.dynamic_window_size);
     assert!(skin.meters.len() >= 4);
     assert!(skin.measures.len() >= 2);
     assert!(skin

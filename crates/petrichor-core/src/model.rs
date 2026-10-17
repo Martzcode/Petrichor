@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::diagnostics::Diagnostics;
 use crate::include;
+use crate::ini::IniDocument;
 use crate::readers::{read_bool, read_color, read_f32, read_u32, Color};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
@@ -320,6 +321,11 @@ impl Skin {
 }
 
 pub fn build_skin(ini_path: &Path) -> (Skin, Diagnostics) {
+    let (skin, _document, diagnostics) = build_skin_with_document(ini_path);
+    (skin, diagnostics)
+}
+
+pub fn build_skin_with_document(ini_path: &Path) -> (Skin, IniDocument, Diagnostics) {
     let root = ini_path
         .parent()
         .map(|p| p.to_path_buf())
@@ -414,7 +420,7 @@ pub fn build_skin(ini_path: &Path) -> (Skin, Diagnostics) {
     let mut diagnostics = resolved.diagnostics;
     crate::validate::validate_document(&document, ini_path, &mut diagnostics);
 
-    (skin, diagnostics)
+    (skin, document, diagnostics)
 }
 
 fn split_list(value: &str) -> Vec<String> {
@@ -513,7 +519,7 @@ Text=%1
         assert_eq!(skin.settings.update_ms, 500);
         assert!(skin.settings.dynamic_window_size);
         assert_eq!(skin.settings.group, vec!["Top", "Clock"]);
-        assert_eq!(skin.settings.solid_color, Some(Color::new(0, 0, 0x80, 0)));
+        assert_eq!(skin.settings.solid_color, Some(Color::new(0, 0, 0, 0x80)));
     }
 
     #[test]

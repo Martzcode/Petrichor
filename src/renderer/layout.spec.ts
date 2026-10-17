@@ -1,0 +1,206 @@
+import { layoutSkin, resolveText } from './layout';
+import {
+  BarMeter,
+  CommonMeter,
+  ImageMeter,
+  RenderModel,
+  StringMeter,
+} from './skin-model';
+
+function common(overrides: Partial<CommonMeter> = {}): CommonMeter {
+  return {
+    name: 'Meter',
+    kind: 'String',
+    x: { value: 0, relative: 'absolute' },
+    y: { value: 0, relative: 'absolute' },
+    width: null,
+    height: null,
+    padding: [0, 0, 0, 0],
+    hidden: false,
+    solid_color: null,
+    solid_color2: null,
+    gradient_angle: 0,
+    group: [],
+    measure_names: [],
+    ...overrides,
+  };
+}
+
+function stringMeter(overrides: Partial<StringMeter> = {}): StringMeter {
+  return {
+    type: 'string',
+    text: null,
+    font_face: 'sans-serif',
+    font_size: 10,
+    font_color: { r: 255, g: 255, b: 255, a: 255 },
+    font_weight: -1,
+    string_align: 'LEFT',
+    string_case: 'NONE',
+    string_style: 'NORMAL',
+    string_effect: 'NONE',
+    prefix: '',
+    postfix: '',
+    num_of_decimals: -1,
+    angle: 0,
+    ...common({ kind: 'String' }),
+    ...overrides,
+  };
+}
+
+function barMeter(overrides: Partial<BarMeter> = {}): BarMeter {
+  return {
+    type: 'bar',
+    color: { r: 0, g: 200, b: 100, a: 255 },
+    orientation: 'HORIZONTAL',
+    flip: false,
+    border: 0,
+    value: 0.5,
+    ...common({ kind: 'Bar' }),
+    ...overrides,
+  };
+}
+
+function imageMeter(overrides: Partial<ImageMeter> = {}): ImageMeter {
+  return {
+    type: 'image',
+    image: '/tmp/logo.png',
+    preserve_aspect_ratio: 0,
+    tile: false,
+    scale_margins: [0, 0, 0, 0],
+    ...common({ kind: 'Image' }),
+    ...overrides,
+  };
+}
+
+function model(meters: RenderModel['meters']): RenderModel {
+  return {
+    name: 'Demo',
+    width: null,
+    height: null,
+    update_ms: 1000,
+    dynamic_window_size: true,
+    background: {
+      mode: 'SOLID',
+      image: null,
+      color: { r: 0, g: 0, b: 0, a: 0 },
+      color2: null,
+      gradient_angle: 0,
+    },
+    meters,
+    local_fonts: [],
+    measure_values: { cpu: '42' },
+  };
+}
+
+const measure = (width: number, height: number) => () => ({ width, height });
+
+describe('layoutSkin', () => {
+  it('sizes the skin from the meters', () => {
+    const layout = layoutSkin(
+      model([stringMeter({ text: 'hello' })]),
+      measure(40, 12),
+    );
+    expect(layout.width).toBe(40);
+    expect(layout.height).toBe(12);
+    expect(layout.boxes[0].width).toBe(40);
+  });
+
+  it('resolves absolute and relative positions', () => {
+    const layout = layoutSkin(
+      model([
+        stringMeter({ x: { value: 10, relative: 'absolute' } }),
+        stringMeter({
+          x: { value: 5, relative: 'position' },
+          y: { value: 5, relative: 'edge' },
+        }),
+        stringMeter({ x: { value: 2, relative: 'edge' } }),
+      ]),
+      measure(20, 10),
+    );
+    expect(layout.boxes[0].x).toBe(10);
+    expect(layout.boxes[1].x).toBe(15);
+    expect(layout.boxes[1].y).toBe(15);
+    expect(layout.boxes[2].x).toBe(37);
+  });
+
+  it('applies padding to content', () => {
+    const layout = layoutSkin(
+      model([stringMeter({ padding: [4, 2, 6, 8] })]),
+      measure(30, 10),
+    );
+    const box = layout.boxes[0];
+    expect(box.width).toBe(40);
+    expect(box.height).toBe(20);
+    expect(box.content.x).toBe(4);
+    expect(box.content.y).toBe(2);
+    expect(box.content.width).toBe(30);
+    expect(box.content.height).toBe(10);
+  });
+
+  it('honours explicit width and height', () => {
+    const layout = layoutSkin(
+      model([stringMeter({ width: 200, height: 50 })]),
+      measure(10, 10),
+    );
+    expect(layout.boxes[0].width).toBe(200);
+    expect(layout.boxes[0].height).toBe(50);
+  });
+
+  it('collapses hidden meters', () => {
+    const layout = layoutSkin(
+      model([stringMeter({ hidden: true })]),
+      measure(30, 10),
+    );
+    expect(layout.boxes[0].width).toBe(0);
+    expect(layout.boxes[0].height).toBe(0);
+  });
+
+  it('uses image dimensions when available', () => {
+    const layout = layoutSkin(model([imageMeter()]), measure(0, 0), () => ({
+      width: 64,
+      height: 32,
+    }));
+    expect(layout.boxes[0].width).toBe(64);
+    expect(layout.boxes[0].height).toBe(32);
+  });
+
+  it('defaults bar size', () => {
+    const layout = layoutSkin(model([barMeter()]), measure(0, 0));
+    expect(layout.boxes[0].width).toBe(100);
+    expect(layout.boxes[0].height).toBe(10);
+  });
+
+  it('prefers explicit skin dimensions', () => {
+    const skin = model([stringMeter()]);
+    skin.width = 500;
+    skin.height = 300;
+    const layout = layoutSkin(skin, measure(10, 10));
+    expect(layout.width).toBe(500);
+    expect(layout.height).toBe(300);
+  });
+});
+
+describe('resolveText', () => {
+  it('substitutes measure references', () => {
+    const meter = stringMeter({
+      text: 'CPU : %1%',
+      measure_names: ['CPU'],
+    });
+    expect(resolveText(meter, { cpu: '42' })).toBe('CPU : 42%');
+  });
+
+  it('falls back to the first measure without Text', () => {
+    const meter = stringMeter({ measure_names: ['CPU'] });
+    expect(resolveText(meter, { CPU: '7' })).toBe('7');
+  });
+
+  it('applies case and affixes', () => {
+    const meter = stringMeter({
+      text: 'hello',
+      string_case: 'UPPER',
+      prefix: '[',
+      postfix: ']',
+    });
+    expect(resolveText(meter, {})).toBe('[HELLO]');
+  });
+});

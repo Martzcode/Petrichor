@@ -1,4 +1,5 @@
 import { inject, Injectable, signal } from '@angular/core';
+import type { RenderModel } from '../renderer/skin-model';
 
 declare global {
   interface Window {
@@ -17,6 +18,62 @@ export interface LogEntry {
   timestamp_ms: number;
   source: string | null;
   message: string;
+}
+
+export type DiagnosticSeverity = 'error' | 'warning' | 'info';
+
+export interface Diagnostic {
+  severity: DiagnosticSeverity;
+  file: string | null;
+  line: number | null;
+  section: string | null;
+  key: string | null;
+  message: string;
+}
+
+export interface Diagnostics {
+  items: Diagnostic[];
+}
+
+export interface WindowFlags {
+  always_on_top: boolean;
+  click_through: boolean;
+  skip_taskbar: boolean;
+}
+
+export interface SkinWindowInfo {
+  label: string;
+  path: string;
+  always_on_top: boolean;
+  click_through: boolean;
+  skip_taskbar: boolean;
+}
+
+export interface RenderLoadResult {
+  model: RenderModel;
+  diagnostics: Diagnostics;
+  flags: WindowFlags;
+}
+
+export interface SkinFile {
+  filename: string;
+  path: string;
+  is_favorite: boolean;
+}
+
+export interface SkinFolder {
+  name: string;
+  path: string;
+  level: number;
+  files: SkinFile[];
+  base_id: number;
+  active_variant: number;
+  has_favorite: boolean;
+}
+
+export interface Registry {
+  root: string;
+  folders: SkinFolder[];
 }
 
 export interface GlobalSettings {
@@ -93,6 +150,87 @@ export class PetrichorIpc {
     await listen<LogEntry>('petrichor://log', (event) =>
       callback(event.payload),
     );
+  }
+
+  async currentWindowLabel(): Promise<string> {
+    if (!this.available()) return 'main';
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    return getCurrentWindow().label;
+  }
+
+  async skinWindowInfo(label: string): Promise<SkinWindowInfo | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<SkinWindowInfo | null>('skin_window_info', { label });
+  }
+
+  async loadRenderModel(path: string): Promise<RenderLoadResult | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<RenderLoadResult>('load_render_model', { path });
+  }
+
+  async readMeasures(path: string): Promise<Record<string, string>> {
+    if (!this.available()) return {};
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<Record<string, string>>('read_measures', { path });
+  }
+
+  async openSkinWindow(path: string): Promise<string> {
+    if (!this.available()) return 'main';
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<string>('open_skin_window', { path });
+  }
+
+  async closeSkinWindow(label: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('close_skin_window', { label });
+  }
+
+  async listSkinWindows(): Promise<SkinWindowInfo[]> {
+    if (!this.available()) return [];
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<SkinWindowInfo[]>('list_skin_windows');
+  }
+
+  async applySkinWindowFlags(label: string, flags: WindowFlags): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('apply_skin_window_flags', { label, flags });
+  }
+
+  async fitSkinWindow(
+    label: string,
+    width: number,
+    height: number,
+  ): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('fit_skin_window', { label, width, height });
+  }
+
+  async showSkinWindow(label: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('show_skin_window', { label });
+  }
+
+  async assetUrl(path: string): Promise<string> {
+    if (!this.available()) return path;
+    const { convertFileSrc } = await import('@tauri-apps/api/core');
+    return convertFileSrc(path);
+  }
+
+  async defaultSkinRoot(): Promise<string | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<string | null>('default_skin_root');
+  }
+
+  async scanSkins(root: string): Promise<Registry> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<Registry>('scan_skins', { root });
   }
 }
 

@@ -2,6 +2,11 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capacités par défaut de l'application Petrichor.",
-  "windows": ["main"],
-  "permissions": ["core:default", "core:event:default"]
+  "windows": ["main", "skin-*"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "core:webview:default"
+  ]
 }

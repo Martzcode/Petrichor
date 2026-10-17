@@ -49,6 +49,22 @@ npm run desktop:dev     # serveur Angular + fenêtre Tauri (rechargement à chau
 Pour ne lancer que la partie web (sans Tauri) : `npm run start` puis ouvrir
 <http://localhost:4200>. Sans backend Tauri, l'application bascule en mode navigateur.
 
+Depuis l'interface principale, la section **Skins** liste le corpus `skins-demo/` ; le bouton
+associé ouvre le skin dans une fenêtre transparente. Chaque skin s'exécute dans sa propre
+fenêtre Tauri sans décor, redimensionnée automatiquement (`DynamicWindowSize`).
+
+## Rendu des skins
+
+Le moteur calcule en Rust un _modèle de rendu_ (`RenderModel`) : options fusionnées avec les
+`MeterStyle`, variables résolues, géométrie (`X`/`Y` absolu, `r`, `R`), fond et valeurs de
+mesures. Le frontend Angular (`src/renderer/`) calcule la mise en page puis dessine sur un
+`canvas` (fond, meters `String`, `Image`, `Bar`). Les meters non encore supportés sont
+journalisés comme tels et ignorés au rendu.
+
+```bash
+./scripts/snapshot.sh           # instantanés de rendu (listes de commandes de dessin)
+```
+
 ## Structure du dépôt
 
 ```

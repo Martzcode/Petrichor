@@ -1,4 +1,5 @@
 mod commands;
+mod windows;
 
 use tauri::{Emitter, Manager};
 
@@ -8,6 +9,7 @@ pub fn run() {
     petrichor_core::logging::init(false);
 
     tauri::Builder::default()
+        .manage(windows::SkinWindows::new())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -21,8 +23,18 @@ pub fn run() {
             commands::get_logs,
             commands::clear_logs,
             commands::scan_skins,
+            commands::default_skin_root,
             commands::load_skin,
+            commands::load_render_model,
+            commands::read_measures,
             commands::demo_event,
+            windows::open_skin_window,
+            windows::close_skin_window,
+            windows::skin_window_info,
+            windows::list_skin_windows,
+            windows::apply_skin_window_flags,
+            windows::fit_skin_window,
+            windows::show_skin_window,
         ])
         .setup(|app| {
             petrichor_core::logging::notice(format!(
