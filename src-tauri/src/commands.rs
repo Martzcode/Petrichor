@@ -1,6 +1,9 @@
+use std::path::Path;
+
 use serde::Serialize;
 
 use petrichor_core::logging::{self, Entry, Level};
+use petrichor_core::{build_skin, Diagnostics, Registry, Skin};
 use petrichor_sys::{backend, SystemBackend};
 
 pub const LOG_EVENT: &str = "petrichor://log";
@@ -14,6 +17,12 @@ pub struct SystemInfo {
     pub hostname: String,
     pub user_name: String,
     pub uptime_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SkinLoadResult {
+    pub skin: Skin,
+    pub diagnostics: Diagnostics,
 }
 
 #[tauri::command]
@@ -43,6 +52,28 @@ pub fn get_logs() -> Vec<Entry> {
 #[tauri::command]
 pub fn clear_logs() {
     logging::logger().clear();
+}
+
+#[tauri::command]
+pub fn scan_skins(root: String) -> Registry {
+    Registry::scan(root)
+}
+
+#[tauri::command]
+pub fn load_skin(path: String) -> SkinLoadResult {
+    let (skin, diagnostics) = build_skin(Path::new(&path));
+    for diagnostic in diagnostics.iter() {
+        logging::logger().log(
+            match diagnostic.severity {
+                petrichor_core::Severity::Error => Level::Error,
+                petrichor_core::Severity::Warning => Level::Warning,
+                petrichor_core::Severity::Info => Level::Notice,
+            },
+            Some(&skin.name),
+            diagnostic.to_string(),
+        );
+    }
+    SkinLoadResult { skin, diagnostics }
 }
 
 #[tauri::command]

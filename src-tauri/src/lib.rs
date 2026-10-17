@@ -20,6 +20,8 @@ pub fn run() {
             commands::get_system_info,
             commands::get_logs,
             commands::clear_logs,
+            commands::scan_skins,
+            commands::load_skin,
             commands::demo_event,
         ])
         .setup(|app| {
