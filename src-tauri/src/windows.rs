@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
@@ -13,6 +13,20 @@ pub struct SkinWindowInfo {
     pub always_on_top: bool,
     pub click_through: bool,
     pub skip_taskbar: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkinToggle {
+    Created,
+    Shown,
+    Hidden,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SkinToggleResult {
+    pub label: String,
+    pub state: SkinToggle,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -64,6 +78,14 @@ impl SkinWindows {
         self.inner.lock().ok()?.get(label).cloned()
     }
 
+    pub fn find_by_path(&self, path: &Path) -> Option<String> {
+        let key = canonical(path);
+        let map = self.inner.lock().ok()?;
+        map.values()
+            .find(|info| canonical(&info.path) == key)
+            .map(|info| info.label.clone())
+    }
+
     pub fn list(&self) -> Vec<SkinWindowInfo> {
         match self.inner.lock() {
             Ok(map) => {
@@ -76,11 +98,16 @@ impl SkinWindows {
     }
 }
 
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
 pub fn open_window(
     app: &AppHandle,
     windows: &SkinWindows,
     path: PathBuf,
 ) -> Result<String, String> {
+    let path = canonical(&path);
     let label = windows.next_label();
 
     windows.insert(SkinWindowInfo {
@@ -172,13 +199,48 @@ pub fn close(app: &AppHandle, windows: &SkinWindows, label: &str) -> Result<(), 
     Ok(())
 }
 
+pub fn toggle_window(
+    app: &AppHandle,
+    windows: &SkinWindows,
+    path: PathBuf,
+) -> Result<SkinToggleResult, String> {
+    let Some(label) = windows.find_by_path(&path) else {
+        let label = open_window(app, windows, path)?;
+        return Ok(SkinToggleResult {
+            label,
+            state: SkinToggle::Created,
+        });
+    };
+
+    let window = app
+        .get_webview_window(&label)
+        .ok_or_else(|| format!("fenêtre introuvable: {label}"))?;
+
+    if window.is_visible().unwrap_or(false) {
+        window.hide().map_err(|e| e.to_string())?;
+        petrichor_core::logging::notice(format!("Skin {label} masqué"));
+        Ok(SkinToggleResult {
+            label,
+            state: SkinToggle::Hidden,
+        })
+    } else {
+        window.show().map_err(|e| e.to_string())?;
+        let _ = window.set_focus();
+        petrichor_core::logging::notice(format!("Skin {label} affiché"));
+        Ok(SkinToggleResult {
+            label,
+            state: SkinToggle::Shown,
+        })
+    }
+}
+
 #[tauri::command]
-pub fn open_skin_window(
+pub fn toggle_skin_window(
     app: AppHandle,
     windows: State<'_, SkinWindows>,
     path: String,
-) -> Result<String, String> {
-    open_window(&app, &windows, PathBuf::from(path))
+) -> Result<SkinToggleResult, String> {
+    toggle_window(&app, &windows, PathBuf::from(path))
 }
 
 #[tauri::command]
@@ -263,5 +325,22 @@ mod tests {
 
         windows.remove("skin-1");
         assert!(windows.info("skin-1").is_none());
+    }
+
+    #[test]
+    fn finds_window_by_path() {
+        let windows = SkinWindows::new();
+        windows.insert(SkinWindowInfo {
+            label: "skin-1".to_string(),
+            path: PathBuf::from("/tmp/a.ini"),
+            always_on_top: false,
+            click_through: false,
+            skip_taskbar: true,
+        });
+        assert_eq!(
+            windows.find_by_path(Path::new("/tmp/a.ini")).as_deref(),
+            Some("skin-1")
+        );
+        assert!(windows.find_by_path(Path::new("/tmp/b.ini")).is_none());
     }
 }

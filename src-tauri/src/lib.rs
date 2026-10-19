@@ -29,7 +29,7 @@ pub fn run() {
             commands::read_measures,
             commands::frontend_log,
             commands::demo_event,
-            windows::open_skin_window,
+            windows::toggle_skin_window,
             windows::close_skin_window,
             windows::skin_window_info,
             windows::list_skin_windows,

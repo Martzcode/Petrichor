@@ -49,9 +49,10 @@ npm run desktop:dev     # serveur Angular + fenêtre Tauri (rechargement à chau
 Pour ne lancer que la partie web (sans Tauri) : `npm run start` puis ouvrir
 <http://localhost:4200>. Sans backend Tauri, l'application bascule en mode navigateur.
 
-Depuis l'interface principale, la section **Skins** liste le corpus `skins-demo/` ; le bouton
-associé ouvre le skin dans une fenêtre transparente. Chaque skin s'exécute dans sa propre
-fenêtre Tauri sans décor, redimensionnée automatiquement (`DynamicWindowSize`).
+Depuis l'interface principale, la section **Skins** liste le corpus `skins-demo/` ; chaque bouton
+bascule l'affichage du skin : le premier clic crée la fenêtre, un nouveau clic la masque, un
+dernier clic la réaffiche. Un même skin n'a donc jamais qu'une seule fenêtre. Chaque fenêtre de
+skin est un Tauri sans décor, redimensionnée automatiquement (`DynamicWindowSize`).
 
 En build de développement, la variable `PETRICHOR_OPEN_SKIN` ouvre un skin au démarrage et
 permet de vérifier le rendu sans interaction :

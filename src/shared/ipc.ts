@@ -49,6 +49,13 @@ export interface SkinWindowInfo {
   skip_taskbar: boolean;
 }
 
+export type SkinToggleState = 'created' | 'shown' | 'hidden';
+
+export interface SkinToggleResult {
+  label: string;
+  state: SkinToggleState;
+}
+
 export interface RenderLoadResult {
   model: RenderModel;
   diagnostics: Diagnostics;
@@ -182,10 +189,10 @@ export class PetrichorIpc {
     await invoke('frontend_log', { level, message });
   }
 
-  async openSkinWindow(path: string): Promise<string> {
-    if (!this.available()) return 'main';
+  async toggleSkinWindow(path: string): Promise<SkinToggleResult | null> {
+    if (!this.available()) return null;
     const { invoke } = await import('@tauri-apps/api/core');
-    return invoke<string>('open_skin_window', { path });
+    return invoke<SkinToggleResult>('toggle_skin_window', { path });
   }
 
   async closeSkinWindow(label: string): Promise<void> {

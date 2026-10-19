@@ -47,19 +47,28 @@ export class App implements OnInit {
     this.logEntries.set(this.ipc.logEntries());
   }
 
-  protected async openSkin(path: string): Promise<void> {
+  protected async toggleSkin(path: string): Promise<void> {
     this.notice.set(null);
     try {
-      const label = await this.ipc.openSkinWindow(path);
+      const result = await this.ipc.toggleSkinWindow(path);
       await this.ipc.refreshLogs();
       this.logEntries.set(this.ipc.logEntries());
-      this.notice.set(`Fenêtre « ${label} » demandée pour ${path}`);
+      if (!result) {
+        this.notice.set('Backend Petrichor indisponible.');
+        return;
+      }
+      const name = path.split('/').pop() ?? path;
+      this.notice.set(
+        result.state === 'hidden'
+          ? `Skin « ${name} » masqué`
+          : `Skin « ${name} » affiché`,
+      );
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      this.notice.set(`Échec de l'ouverture du skin : ${message}`);
+      this.notice.set(`Échec de la bascule du skin : ${message}`);
       await this.ipc.logBackend(
         'error',
-        `Ouverture du skin échouée : ${message}`,
+        `Bascule du skin échouée : ${message}`,
       );
       await this.ipc.refreshLogs();
       this.logEntries.set(this.ipc.logEntries());
