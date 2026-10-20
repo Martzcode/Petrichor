@@ -38,6 +38,7 @@ export interface Diagnostics {
 export interface WindowFlags {
   always_on_top: boolean;
   click_through: boolean;
+  draggable: boolean;
   skip_taskbar: boolean;
 }
 
@@ -46,7 +47,20 @@ export interface SkinWindowInfo {
   path: string;
   always_on_top: boolean;
   click_through: boolean;
+  draggable: boolean;
   skip_taskbar: boolean;
+}
+
+export type SkinCommand =
+  | { command: 'redraw' }
+  | { command: 'update' }
+  | { command: 'refresh' }
+  | { command: 'draggable'; value: boolean };
+
+export interface AppPaths {
+  config: string | null;
+  skins: string | null;
+  log: string | null;
 }
 
 export type SkinToggleState = 'created' | 'shown' | 'hidden';
@@ -159,6 +173,16 @@ export class PetrichorIpc {
     );
   }
 
+  async onCommand(
+    callback: (command: SkinCommand) => void,
+  ): Promise<() => void> {
+    if (!this.available()) return () => undefined;
+    const { listen } = await import('@tauri-apps/api/event');
+    return listen<SkinCommand>('petrichor://command', (event) =>
+      callback(event.payload),
+    );
+  }
+
   async currentWindowLabel(): Promise<string> {
     if (!this.available()) return 'main';
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
@@ -181,6 +205,12 @@ export class PetrichorIpc {
     if (!this.available()) return {};
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke<Record<string, string>>('read_measures', { path });
+  }
+
+  async executeBang(label: string | null, command: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('execute_bang', { label, command });
   }
 
   async logBackend(level: LogLevel, message: string): Promise<void> {
@@ -229,6 +259,18 @@ export class PetrichorIpc {
     await invoke('show_skin_window', { label });
   }
 
+  async saveSkinPosition(label: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('save_skin_position', { label });
+  }
+
+  async setSkinDragging(label: string, dragging: boolean): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('set_skin_dragging', { label, dragging });
+  }
+
   async assetUrl(path: string): Promise<string> {
     if (!this.available()) return path;
     const { convertFileSrc } = await import('@tauri-apps/api/core');
@@ -239,6 +281,12 @@ export class PetrichorIpc {
     if (!this.available()) return null;
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke<string | null>('default_skin_root');
+  }
+
+  async getPaths(): Promise<AppPaths | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<AppPaths>('get_paths');
   }
 
   async scanSkins(root: string): Promise<Registry> {

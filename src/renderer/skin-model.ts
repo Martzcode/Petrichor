@@ -26,6 +26,9 @@ export interface CommonMeter {
   gradient_angle: number;
   group: string[];
   measure_names: string[];
+  left_mouse_up_action: string | null;
+  mouse_over_action: string | null;
+  mouse_leave_action: string | null;
 }
 
 export interface StringMeter extends CommonMeter {
@@ -84,6 +87,7 @@ export interface RenderModel {
   height: number | null;
   update_ms: number;
   dynamic_window_size: boolean;
+  on_refresh_action?: string | null;
   background: Background;
   meters: RenderMeter[];
   local_fonts: string[];

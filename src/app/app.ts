@@ -5,7 +5,13 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { LogEntry, PetrichorIpc, SkinFolder } from '../shared/ipc';
+import {
+  AppPaths,
+  LogEntry,
+  PetrichorIpc,
+  SkinFolder,
+  SkinWindowInfo,
+} from '../shared/ipc';
 
 @Component({
   selector: 'app-root',
@@ -19,6 +25,9 @@ export class App implements OnInit {
   protected readonly logEntries = signal<LogEntry[]>([]);
   protected readonly skins = signal<SkinFolder[]>([]);
   protected readonly notice = signal<string | null>(null);
+  protected readonly aboutOpen = signal(false);
+  protected readonly paths = signal<AppPaths | null>(null);
+  protected readonly windows = signal<SkinWindowInfo[]>([]);
 
   async ngOnInit(): Promise<void> {
     if (!this.ipc.hasBackend()) {
@@ -35,6 +44,16 @@ export class App implements OnInit {
     });
 
     await this.refreshSkins();
+    await this.refreshWindows();
+  }
+
+  protected async openAbout(): Promise<void> {
+    this.paths.set(await this.ipc.getPaths());
+    this.aboutOpen.set(true);
+  }
+
+  protected closeAbout(): void {
+    this.aboutOpen.set(false);
   }
 
   protected async clearLogs(): Promise<void> {
@@ -57,6 +76,7 @@ export class App implements OnInit {
         this.notice.set('Backend Petrichor indisponible.');
         return;
       }
+      await this.refreshWindows();
       const name = path.split('/').pop() ?? path;
       this.notice.set(
         result.state === 'hidden'
@@ -73,6 +93,29 @@ export class App implements OnInit {
       await this.ipc.refreshLogs();
       this.logEntries.set(this.ipc.logEntries());
     }
+  }
+
+  protected labelFor(path: string): string | null {
+    return this.windows().find((window) => window.path === path)?.label ?? null;
+  }
+
+  protected async closeSkin(label: string): Promise<void> {
+    try {
+      await this.ipc.closeSkinWindow(label);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      this.notice.set(`Échec de la fermeture du skin : ${message}`);
+    }
+    await this.refreshWindows();
+    await this.ipc.refreshLogs();
+    this.logEntries.set(this.ipc.logEntries());
+  }
+
+  private async refreshWindows(): Promise<void> {
+    if (!this.ipc.hasBackend()) {
+      return;
+    }
+    this.windows.set(await this.ipc.listSkinWindows());
   }
 
   private async refreshSkins(): Promise<void> {

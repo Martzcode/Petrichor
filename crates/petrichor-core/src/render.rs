@@ -6,7 +6,9 @@ use serde::Serialize;
 use crate::diagnostics::Diagnostics;
 use crate::ini::IniDocument;
 use crate::measure::MeasureEngine;
-use crate::model::{build_skin_with_document, BackgroundMode, Meter, Skin};
+use crate::model::{
+    build_skin_with_document, build_skin_with_overrides, BackgroundMode, Meter, Skin,
+};
 use crate::readers::{
     read_bool, read_color, read_f32, read_i32, read_u32, try_read_rect_ltrb, Color,
 };
@@ -72,6 +74,9 @@ pub struct CommonMeter {
     pub gradient_angle: f32,
     pub group: Vec<String>,
     pub measure_names: Vec<String>,
+    pub left_mouse_up_action: Option<String>,
+    pub mouse_over_action: Option<String>,
+    pub mouse_leave_action: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -152,6 +157,7 @@ pub struct RenderModel {
     pub height: Option<u32>,
     pub update_ms: u32,
     pub dynamic_window_size: bool,
+    pub on_refresh_action: Option<String>,
     pub background: Background,
     pub meters: Vec<RenderMeter>,
     pub local_fonts: Vec<PathBuf>,
@@ -159,14 +165,52 @@ pub struct RenderModel {
 }
 
 pub fn build_render_model(ini_path: &Path) -> (RenderModel, Diagnostics) {
-    let (skin, document, diagnostics) = build_skin_with_document(ini_path);
+    build_render_model_with_variables(ini_path, None)
+}
 
+pub fn build_render_model_with_variables(
+    ini_path: &Path,
+    overlay: Option<&Variables>,
+) -> (RenderModel, Diagnostics) {
+    let (skin, document, diagnostics) = build_skin_with_document(ini_path);
+    build_model_from_skin(skin, document, overlay, diagnostics)
+}
+
+pub fn build_render_model_with_options(
+    ini_path: &Path,
+    overlay: Option<&Variables>,
+    overrides: Option<&BTreeMap<String, BTreeMap<String, String>>>,
+) -> (RenderModel, Diagnostics) {
+    let (skin, document, diagnostics) = match overrides {
+        Some(overrides) => build_skin_with_overrides(ini_path, overrides),
+        None => build_skin_with_document(ini_path),
+    };
+    build_model_from_skin(skin, document, overlay, diagnostics)
+}
+
+fn build_model_from_skin(
+    skin: Skin,
+    document: IniDocument,
+    overlay: Option<&Variables>,
+    diagnostics: Diagnostics,
+) -> (RenderModel, Diagnostics) {
     let mut variables = Variables::new();
     for (name, value) in &skin.variables {
         variables.set(name, value);
     }
+    if let Some(overlay) = overlay {
+        for (name, value) in overlay.to_raw_map() {
+            variables.set(&name, &value);
+        }
+    }
 
-    let report = MeasureEngine::new(&skin).update(&petrichor_sys::backend(), chrono::Local::now());
+    let mut engine = MeasureEngine::new(&skin);
+    if let Some(overlay) = overlay {
+        for (name, value) in overlay.to_raw_map() {
+            engine.set_variable(&name, &value);
+        }
+    }
+    let report = engine.update(&petrichor_sys::backend(), chrono::Local::now());
 
     let meters = skin
         .meters
@@ -180,6 +224,7 @@ pub fn build_render_model(ini_path: &Path) -> (RenderModel, Diagnostics) {
         height: skin.settings.skin_height,
         update_ms: skin.settings.update_ms,
         dynamic_window_size: skin.settings.dynamic_window_size,
+        on_refresh_action: skin.settings.on_refresh_action.clone(),
         background: render_background(&skin),
         meters,
         local_fonts: collect_local_fonts(&skin),
@@ -265,6 +310,9 @@ fn build_common(meter: &Meter, options: &[(String, String)], variables: &Variabl
             .map(|value| split_list(&value))
             .unwrap_or_default(),
         measure_names: collect_numbered(options, variables, "MeasureName"),
+        left_mouse_up_action: opt(options, variables, "LeftMouseUpAction"),
+        mouse_over_action: opt(options, variables, "MouseOverAction"),
+        mouse_leave_action: opt(options, variables, "MouseLeaveAction"),
     }
 }
 
@@ -629,6 +677,26 @@ Meter=Histogram
             Some(Color::new(0x20, 0x28, 0x30, 0xFF))
         );
         assert_eq!(model.background.gradient_angle, 90.0);
+    }
+
+    #[test]
+    fn applies_option_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_skin(dir.path(), "[MeterTitle]\nMeter=String\nText=avant\n");
+
+        let mut overrides: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        overrides
+            .entry("MeterTitle".to_string())
+            .or_default()
+            .insert("Text".to_string(), "après".to_string());
+
+        let (model, _) = build_render_model_with_options(&path, None, Some(&overrides));
+        match &model.meters[0] {
+            RenderMeter::String { props, .. } => {
+                assert_eq!(props.text.as_deref(), Some("après"));
+            }
+            other => panic!("meter inattendu : {other:?}"),
+        }
     }
 
     #[test]

@@ -8,10 +8,11 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { layoutSkin, SkinLayout } from '../renderer/layout';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { hitTest, layoutSkin, MeterBox, SkinLayout } from '../renderer/layout';
 import { fontString, renderSkin } from '../renderer/renderer';
 import { ImageMeter, RenderModel, StringMeter } from '../renderer/skin-model';
-import { PetrichorIpc } from '../shared/ipc';
+import { isTauri, PetrichorIpc, SkinCommand } from '../shared/ipc';
 
 @Component({
   selector: 'app-root',
@@ -28,15 +29,25 @@ export class SkinView implements AfterViewInit, OnDestroy {
   private label = '';
   private path = '';
   private model: RenderModel | null = null;
+  private layout: SkinLayout | null = null;
   private images = new Map<string, HTMLImageElement>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private watchdog: ReturnType<typeof setTimeout> | null = null;
+  private unlistenCommand: (() => void) | null = null;
   private updating = false;
+  private draggable = false;
+  private hoveredBox: MeterBox | null = null;
+  private pressPosition: { x: number; y: number } | null = null;
+  private dragging = false;
+  private lastSize: { width: number; height: number } | null = null;
 
   async ngAfterViewInit(): Promise<void> {
     try {
       this.label = await this.ipc.currentWindowLabel();
       await this.ipc.logBackend('notice', `SkinView démarré (${this.label})`);
+      this.unlistenCommand = await this.ipc.onCommand(
+        (command) => void this.handleCommand(command),
+      );
       this.watchdog = setTimeout(() => void this.showWindow(), 3000);
       await this.run();
     } catch (cause) {
@@ -54,16 +65,22 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.clearWatchdog();
-    if (this.timer !== null) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
+    this.stopUpdates();
+    this.unlistenCommand?.();
+    this.unlistenCommand = null;
   }
 
   private clearWatchdog(): void {
     if (this.watchdog !== null) {
       clearTimeout(this.watchdog);
       this.watchdog = null;
+    }
+  }
+
+  private stopUpdates(): void {
+    if (this.timer !== null) {
+      clearInterval(this.timer);
+      this.timer = null;
     }
   }
 
@@ -77,6 +94,7 @@ export class SkinView implements AfterViewInit, OnDestroy {
   }
 
   private async run(): Promise<void> {
+    this.stopUpdates();
     const label = this.label;
     const info = await this.ipc.skinWindowInfo(label);
     if (!info) {
@@ -90,11 +108,13 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
     this.path = info.path;
     this.model = result.model;
+    this.draggable = result.flags.draggable;
 
     await this.loadFonts(result.model);
     this.images = await this.loadImages(result.model);
 
     const layout = this.render();
+    this.lastSize = { width: layout.width, height: layout.height };
     await this.ipc.applySkinWindowFlags(label, result.flags);
     if (result.model.dynamic_window_size) {
       await this.ipc.fitSkinWindow(label, layout.width, layout.height);
@@ -104,6 +124,9 @@ export class SkinView implements AfterViewInit, OnDestroy {
       `Skin ${result.model.name} rendu (${layout.width}×${layout.height})`,
     );
     await this.showWindow();
+    if (result.model.on_refresh_action) {
+      await this.execute(result.model.on_refresh_action);
+    }
 
     this.startUpdates(result.model.update_ms);
   }
@@ -119,12 +142,155 @@ export class SkinView implements AfterViewInit, OnDestroy {
     try {
       this.model.measure_values = await this.ipc.readMeasures(this.path);
       const layout = this.render();
-      if (this.model.dynamic_window_size) {
+      if (
+        this.model.dynamic_window_size &&
+        (this.lastSize?.width !== layout.width ||
+          this.lastSize?.height !== layout.height)
+      ) {
+        this.lastSize = { width: layout.width, height: layout.height };
         await this.ipc.fitSkinWindow(this.label, layout.width, layout.height);
       }
     } finally {
       this.updating = false;
     }
+  }
+
+  private async handleCommand(command: SkinCommand): Promise<void> {
+    try {
+      switch (command.command) {
+        case 'redraw':
+          if (this.model) this.render();
+          break;
+        case 'update':
+          await this.tick();
+          break;
+        case 'refresh':
+          await this.run();
+          break;
+        case 'draggable':
+          this.draggable = command.value;
+          this.updateCursor(this.hoveredBox);
+          break;
+      }
+    } catch (cause) {
+      await this.logError('commande', cause);
+    }
+  }
+
+  onMouseMove(event: MouseEvent): void {
+    const box = this.boxAt(event);
+    const name = box?.meter.name ?? null;
+    const previous = this.hoveredBox?.meter.name ?? null;
+
+    if (name !== previous) {
+      const leaving = this.hoveredBox?.meter.mouse_leave_action;
+      if (leaving) void this.execute(leaving);
+      this.hoveredBox = box;
+      const entering = box?.meter.mouse_over_action;
+      if (entering) void this.execute(entering);
+    }
+
+    this.updateCursor(box);
+  }
+
+  onMouseLeave(): void {
+    const leaving = this.hoveredBox?.meter.mouse_leave_action;
+    if (leaving) void this.execute(leaving);
+    this.hoveredBox = null;
+    this.updateCursor(null);
+  }
+
+  onMouseDown(event: MouseEvent): void {
+    if (event.button !== 0) return;
+    this.pressPosition = { x: event.clientX, y: event.clientY };
+    if (!this.draggable) return;
+    this.dragging = true;
+    void this.startDragging();
+    void this.ipc.setSkinDragging(this.label, true);
+  }
+
+  onMouseUp(event: MouseEvent): void {
+    const press = this.pressPosition;
+    this.pressPosition = null;
+    const wasDragging = this.dragging;
+    this.dragging = false;
+
+    if (event.button !== 0) return;
+    if (wasDragging) {
+      void this.ipc.setSkinDragging(this.label, false);
+    }
+    const moved =
+      press !== null &&
+      Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4;
+    if (wasDragging && moved) {
+      void this.savePosition();
+      return;
+    }
+
+    const action = this.boxAt(event)?.meter.left_mouse_up_action;
+    if (action) void this.execute(action);
+  }
+
+  private boxAt(event: MouseEvent): MeterBox | null {
+    const layout = this.layout;
+    const canvas = this.canvasRef()?.nativeElement;
+    if (!layout || !canvas) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    return hitTest(
+      layout.boxes,
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+    );
+  }
+
+  private updateCursor(box: MeterBox | null): void {
+    const canvas = this.canvasRef()?.nativeElement;
+    if (!canvas) return;
+
+    const meter = box?.meter;
+    const hasAction =
+      meter?.left_mouse_up_action ||
+      meter?.mouse_over_action ||
+      meter?.mouse_leave_action;
+    canvas.style.cursor = hasAction
+      ? 'pointer'
+      : this.draggable
+        ? 'move'
+        : 'default';
+  }
+
+  private async savePosition(): Promise<void> {
+    try {
+      await this.ipc.saveSkinPosition(this.label);
+    } catch (cause) {
+      await this.logError('position', cause);
+    }
+  }
+
+  private async startDragging(): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      await getCurrentWindow().startDragging();
+    } catch (cause) {
+      await this.logError('glisser', cause);
+    }
+  }
+
+  private async execute(command: string): Promise<void> {
+    try {
+      await this.ipc.executeBang(this.label, command);
+    } catch (cause) {
+      await this.logError('action', cause);
+    }
+  }
+
+  private async logError(context: string, cause: unknown): Promise<void> {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    await this.ipc.logBackend(
+      'error',
+      `SkinView ${this.label || '?'} (${context}) : ${message}`,
+    );
   }
 
   private render(): SkinLayout {
@@ -141,6 +307,7 @@ export class SkinView implements AfterViewInit, OnDestroy {
       (meter) => this.imageSize(this.images, meter),
     );
 
+    this.layout = layout;
     this.prepareCanvas(canvas, ctx, layout);
     renderSkin(ctx, model, layout, (path) => this.images.get(path) ?? null);
     return layout;
@@ -222,10 +389,19 @@ export class SkinView implements AfterViewInit, OnDestroy {
     layout: SkinLayout,
   ): void {
     const ratio = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(layout.width * ratio));
-    canvas.height = Math.max(1, Math.round(layout.height * ratio));
-    canvas.style.width = `${layout.width}px`;
-    canvas.style.height = `${layout.height}px`;
+    const width = Math.max(1, Math.round(layout.width * ratio));
+    const height = Math.max(1, Math.round(layout.height * ratio));
+
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    if (canvas.style.width !== `${layout.width}px`) {
+      canvas.style.width = `${layout.width}px`;
+    }
+    if (canvas.style.height !== `${layout.height}px`) {
+      canvas.style.height = `${layout.height}px`;
+    }
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   }
 }

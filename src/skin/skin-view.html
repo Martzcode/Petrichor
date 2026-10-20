@@ -1,4 +1,10 @@
-<canvas #canvas></canvas>
+<canvas
+  #canvas
+  (mousemove)="onMouseMove($event)"
+  (mouseleave)="onMouseLeave()"
+  (mousedown)="onMouseDown($event)"
+  (mouseup)="onMouseUp($event)"
+></canvas>
 
 @if (error(); as message) {
 <pre class="skin-error">{{ message }}</pre>

@@ -1,4 +1,4 @@
-import { layoutSkin, resolveText } from './layout';
+import { hitTest, layoutSkin, resolveText } from './layout';
 import {
   BarMeter,
   CommonMeter,
@@ -22,6 +22,9 @@ function common(overrides: Partial<CommonMeter> = {}): CommonMeter {
     gradient_angle: 0,
     group: [],
     measure_names: [],
+    left_mouse_up_action: null,
+    mouse_over_action: null,
+    mouse_leave_action: null,
     ...overrides,
   };
 }
@@ -202,5 +205,31 @@ describe('resolveText', () => {
       postfix: ']',
     });
     expect(resolveText(meter, {})).toBe('[HELLO]');
+  });
+});
+
+describe('hitTest', () => {
+  function boxes() {
+    const skin = model([
+      stringMeter({
+        name: 'Bottom',
+        x: { value: 0, relative: 'absolute' },
+        y: { value: 0, relative: 'absolute' },
+      }),
+      stringMeter({
+        name: 'Top',
+        x: { value: 0, relative: 'absolute' },
+        y: { value: 0, relative: 'absolute' },
+      }),
+    ]);
+    return layoutSkin(skin, measure(10, 10)).boxes;
+  }
+
+  it('returns the topmost box under the cursor', () => {
+    expect(hitTest(boxes(), 5, 5)?.meter.name).toBe('Top');
+  });
+
+  it('returns null outside every box', () => {
+    expect(hitTest(boxes(), 100, 100)).toBeNull();
   });
 });

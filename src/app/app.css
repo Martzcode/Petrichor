@@ -143,7 +143,38 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.skins button.secondary {
+  background: #3a4652;
+}
+
 .skin-name {
   min-width: 6rem;
   color: #c9d3dd;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 11, 0.72);
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  z-index: 10;
+}
+
+.about {
+  background: #1b1f24;
+  border: 1px solid #2b3238;
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  max-width: 640px;
+  width: 100%;
+}
+
+.about h2 {
+  margin-top: 0;
+}
+
+.about dd {
+  overflow-wrap: anywhere;
 }

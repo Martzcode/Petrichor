@@ -43,8 +43,36 @@
       >
         Effacer les logs
       </button>
+      <button type="button" (click)="openAbout()">À propos</button>
     </div>
   </section>
+
+  @if (aboutOpen()) {
+  <div class="overlay" (click)="closeAbout()">
+    <section class="about" (click)="$event.stopPropagation()">
+      <h2>À propos de Petrichor</h2>
+      <dl>
+        <dt>Version</dt>
+        <dd>{{ ipc.appVersion() }}</dd>
+        @if (ipc.systemInfo(); as sys) {
+        <dt>Système</dt>
+        <dd>{{ sys.os_name }} {{ sys.os_version }}</dd>
+        <dt>Hôte</dt>
+        <dd>{{ sys.hostname }} ({{ sys.user_name }})</dd>
+        }
+        <dt>Configuration</dt>
+        <dd>{{ paths()?.config ?? 'indisponible' }}</dd>
+        <dt>Skins</dt>
+        <dd>{{ paths()?.skins ?? 'indisponible' }}</dd>
+        <dt>Journal</dt>
+        <dd>{{ paths()?.log ?? 'indisponible' }}</dd>
+      </dl>
+      <div class="actions">
+        <button type="button" (click)="closeAbout()">Fermer</button>
+      </div>
+    </section>
+  </div>
+  }
 
   <section class="panel">
     <h2>Skins</h2>
@@ -56,7 +84,11 @@
         <button type="button" (click)="toggleSkin(file.path)">
           {{ file.filename }}
         </button>
-        }
+        @if (labelFor(file.path); as label) {
+        <button type="button" class="secondary" (click)="closeSkin(label)">
+          Fermer
+        </button>
+        } }
       </li>
       } @empty {
       <li class="empty">Aucun skin détecté.</li>

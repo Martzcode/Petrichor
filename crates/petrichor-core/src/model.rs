@@ -331,8 +331,56 @@ pub fn build_skin_with_document(ini_path: &Path) -> (Skin, IniDocument, Diagnost
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
     let resolved = include::resolve(ini_path, &root);
-    let document = resolved.document;
 
+    build_skin_from_resolved(
+        ini_path,
+        root,
+        resolved.document,
+        resolved.files,
+        resolved.diagnostics,
+    )
+}
+
+pub fn build_skin_with_overrides(
+    ini_path: &Path,
+    overrides: &BTreeMap<String, BTreeMap<String, String>>,
+) -> (Skin, IniDocument, Diagnostics) {
+    let root = ini_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let resolved = include::resolve(ini_path, &root);
+    let mut document = resolved.document;
+    apply_overrides(&mut document, overrides);
+
+    build_skin_from_resolved(
+        ini_path,
+        root,
+        document,
+        resolved.files,
+        resolved.diagnostics,
+    )
+}
+
+pub fn apply_overrides(
+    document: &mut IniDocument,
+    overrides: &BTreeMap<String, BTreeMap<String, String>>,
+) {
+    for (section, options) in overrides {
+        let target = document.section_mut(section);
+        for (option, value) in options {
+            target.set(option, value, 0);
+        }
+    }
+}
+
+fn build_skin_from_resolved(
+    ini_path: &Path,
+    root: PathBuf,
+    document: IniDocument,
+    files: Vec<PathBuf>,
+    include_diagnostics: Diagnostics,
+) -> (Skin, IniDocument, Diagnostics) {
     let folder = root
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -414,10 +462,10 @@ pub fn build_skin_with_document(ini_path: &Path) -> (Skin, IniDocument, Diagnost
         measures,
         meters,
         styles,
-        included_files: resolved.files,
+        included_files: files,
     };
 
-    let mut diagnostics = resolved.diagnostics;
+    let mut diagnostics = include_diagnostics;
     crate::validate::validate_document(&document, ini_path, &mut diagnostics);
 
     (skin, document, diagnostics)

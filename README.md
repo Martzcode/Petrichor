@@ -51,14 +51,30 @@ Pour ne lancer que la partie web (sans Tauri) : `npm run start` puis ouvrir
 
 Depuis l'interface principale, la section **Skins** liste le corpus `skins-demo/` ; chaque bouton
 bascule l'affichage du skin : le premier clic crée la fenêtre, un nouveau clic la masque, un
-dernier clic la réaffiche. Un même skin n'a donc jamais qu'une seule fenêtre. Chaque fenêtre de
-skin est un Tauri sans décor, redimensionnée automatiquement (`DynamicWindowSize`).
+dernier clic la réaffiche. Un même skin n'a donc jamais qu'une seule fenêtre. Le bouton
+**Fermer** détruit la fenêtre et purge l'état du skin (mesures, variables, options). Chaque
+fenêtre de skin est un Tauri sans décor, redimensionnée automatiquement
+(`DynamicWindowSize`).
 
-En build de développement, la variable `PETRICHOR_OPEN_SKIN` ouvre un skin au démarrage et
-permet de vérifier le rendu sans interaction :
+En build de développement, la variable `PETRICHOR_OPEN_SKIN` ouvre un ou plusieurs skins au
+démarrage (chemins séparés par des virgules) et permet de vérifier le rendu sans interaction :
 
 ```bash
-PETRICHOR_OPEN_SKIN="$PWD/skins-demo/Clock/Clock.ini" npm run desktop:dev
+PETRICHOR_OPEN_SKIN="$PWD/skins-demo/Clock/Clock.ini,$PWD/skins-demo/Counter/Counter.ini" \
+  npm run desktop:dev
+```
+
+`PETRICHOR_TEST_BANG` exécute une chaîne de bangs au démarrage, ciblée sur une fenêtre
+(`<label>|<bangs>`) :
+
+```bash
+PETRICHOR_TEST_BANG='skin-1|!Log "test"[!Move "300" "200"][!ZPos "1"]'
+```
+
+Ces deux variables sont compilées en debug, ou en release avec la feature `dev-harness` :
+
+```bash
+cargo build --release -p petrichor --features custom-protocol,dev-harness
 ```
 
 ## Rendu des skins
@@ -86,8 +102,64 @@ Options communes : `UpdateDivider`, `Disabled`, `Paused`, `MinValue`, `MaxValue`
 `Start`/`Step`/`End`/`Reset`, et `Calc` accepte `Formula` (références aux mesures, `counter`).
 
 Les valeurs sont exposées via l'IPC `read_measures` et réinjectées dans le rendu à chaque
-intervalle `Update`. Les actions sont émises dans le rapport de mise à jour ; leur exécution
-complète (`!Update`, `!Redraw`, …) est branchée en Phase 4.
+intervalle `Update`. Les actions `OnUpdateAction` et `OnChangeAction` sont exécutées par le
+moteur de bangs (voir ci-dessous).
+
+## Bangs et interactions
+
+Le parseur de bangs (`crates/petrichor-core/src/bang.rs`) accepte les chaînes `[…]`, les
+arguments entre guillemets et le préfixe `!Rainmeter`. Les bangs MVP sont exécutés par
+`src-tauri/src/bangs.rs` :
+
+| Bang                                                                            | Effet                                           |
+| ------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `!Refresh`, `!Redraw`, `!Update`                                                | Rechargement, redessin ou mise à jour immédiate |
+| `!Hide`, `!Show`, `!Toggle`                                                     | Visibilité de la fenêtre                        |
+| `!Move`, `!ZPos`, `!ClickThrough`, `!Draggable`                                 | Géométrie et options de fenêtre                 |
+| `!SetVariable`, `!SetOption`                                                    | Variable ou option de section modifiée à chaud  |
+| `!Log`, `!About`, `!Manage`                                                     | Journal, fenêtre À propos ou gestion            |
+| `!Quit`, `!RefreshApp`, `!ActivateConfig`, `!DeactivateConfig`, `!ToggleConfig` | Cycle de vie                                    |
+
+Les bangs externes (dossier `Bangs/`) sont ignorés avec un avertissement. Les variables
+`#Variable#` des arguments sont résolues au moment de l'exécution ; `!SetOption` accepte une
+valeur contenant des espaces.
+
+Actions souris prises en charge : `LeftMouseUpAction`, `MouseOverAction` et
+`MouseLeaveAction`. Un skin déplaçable peut être glissé à la souris (maintenir le clic) ; sa
+position est enregistrée au relâchement.
+
+## Persistance et fenêtre À propos
+
+L'état des skins (position, `AlwaysOnTop`, `ClickThrough`, `Draggable`, `SavePosition`) est
+conservé dans `$XDG_CONFIG_HOME/Petrichor/Petrichor.ini` (ou `~/.config/Petrichor/…`), avec une
+section par skin (`Dossier\Fichier.ini`). Il est enregistré au relâchement du glisser et via `!Move`.
+
+La fenêtre **À propos** (menu principal) affiche la version et les chemins de configuration,
+de skins et de journal fournis par `get_paths`.
+
+> Sous Wayland, un client ne peut pas positionner lui-même ses fenêtres : `!Move` et la
+> restauration de position sont effectifs sous X11, alors que le compositeur décide de la
+> position sous Wayland.
+
+## Skins de démonstration
+
+`skins-demo/` contient la recette MVP :
+
+- `Clock/Clock.ini` — horloge `Time` actualisée chaque seconde ;
+- `System/Monitor.ini` — CPU et mémoire (`CPU`, `Memory`, `Bar`) ;
+- `Counter/Counter.ini` — compteur animé (`Calc`, `Loop`, `Update=250`) ; un clic journalise
+  « Compteur cliqué » et le survol journalise le cycle.
+
+Les trois activent `!Draggable "1"` via `OnRefreshAction` : ils peuvent donc être déplacés
+directement au clic gauche maintenu, sans réglage préalable.
+
+## Performances
+
+Mesures release sur une machine 4 cœurs (3 skins à `Update=1000`, 20 s de chauffe, médiane de
+3 échantillons de 10 s) : environ **4 à 5 % d'un cœur** (≈ 1,1 % de la machine), **930 Mo RSS**
+cumulés (dont l'empreinte des processus WebKitGTK). Une fenêtre de skin inactive consomme
+moins de 0,2 %. Le redimensionnement dynamique n'est appliqué que lorsque la taille change et
+le canvas n'est réalloué qu'en cas de changement de dimensions.
 
 Pour vérifier un build embarquant le frontend (sans serveur Angular) :
 

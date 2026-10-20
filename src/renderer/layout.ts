@@ -116,6 +116,26 @@ function verticalBaseline(value: string): 'top' | 'middle' | 'bottom' {
   return 'top';
 }
 
+export function hitTest(
+  boxes: MeterBox[],
+  x: number,
+  y: number,
+): MeterBox | null {
+  for (let index = boxes.length - 1; index >= 0; index -= 1) {
+    const box = boxes[index];
+    if (box.width <= 0 || box.height <= 0) continue;
+    if (
+      x >= box.x &&
+      x <= box.x + box.width &&
+      y >= box.y &&
+      y <= box.y + box.height
+    ) {
+      return box;
+    }
+  }
+  return null;
+}
+
 export function layoutSkin(
   model: RenderModel,
   measureText: MeasureTextFn,
