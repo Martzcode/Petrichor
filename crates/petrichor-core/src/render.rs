@@ -5,10 +5,12 @@ use serde::Serialize;
 
 use crate::diagnostics::Diagnostics;
 use crate::ini::IniDocument;
+use crate::measure::MeasureEngine;
 use crate::model::{build_skin_with_document, BackgroundMode, Meter, Skin};
 use crate::readers::{
     read_bool, read_color, read_f32, read_i32, read_u32, try_read_rect_ltrb, Color,
 };
+use crate::reference::MeasureValue;
 use crate::style::resolved_options;
 use crate::variables::Variables;
 
@@ -164,10 +166,12 @@ pub fn build_render_model(ini_path: &Path) -> (RenderModel, Diagnostics) {
         variables.set(name, value);
     }
 
+    let report = MeasureEngine::new(&skin).update(&petrichor_sys::backend(), chrono::Local::now());
+
     let meters = skin
         .meters
         .iter()
-        .map(|meter| render_meter(&document, &skin, meter, &variables))
+        .map(|meter| render_meter(&document, &skin, meter, &variables, &report.values))
         .collect();
 
     let model = RenderModel {
@@ -179,7 +183,7 @@ pub fn build_render_model(ini_path: &Path) -> (RenderModel, Diagnostics) {
         background: render_background(&skin),
         meters,
         local_fonts: collect_local_fonts(&skin),
-        measure_values: crate::measure::evaluate(&skin),
+        measure_values: report.strings,
     };
 
     (model, diagnostics)
@@ -190,6 +194,7 @@ fn render_meter(
     skin: &Skin,
     meter: &Meter,
     variables: &Variables,
+    values: &BTreeMap<String, MeasureValue>,
 ) -> RenderMeter {
     let options = resolved_options(document, &meter.name);
     let common = build_common(meter, &options, variables);
@@ -205,7 +210,7 @@ fn render_meter(
         },
         "BAR" => RenderMeter::Bar {
             common,
-            props: build_bar(skin, &options, variables),
+            props: build_bar(&options, variables, values),
         },
         other => RenderMeter::Unsupported {
             common,
@@ -330,7 +335,11 @@ fn build_image(skin: &Skin, options: &[(String, String)], variables: &Variables)
     }
 }
 
-fn build_bar(skin: &Skin, options: &[(String, String)], variables: &Variables) -> BarMeter {
+fn build_bar(
+    options: &[(String, String)],
+    variables: &Variables,
+    values: &BTreeMap<String, MeasureValue>,
+) -> BarMeter {
     let orientation = opt(options, variables, "BarOrientation")
         .unwrap_or_else(|| "HORIZONTAL".to_string())
         .trim()
@@ -339,18 +348,8 @@ fn build_bar(skin: &Skin, options: &[(String, String)], variables: &Variables) -
     let measure_names = collect_numbered(options, variables, "MeasureName");
     let value = measure_names
         .first()
-        .and_then(|name| skin.measure(name))
-        .and_then(|measure| measure.options.get("MaxValue"))
-        .map(|value| crate::readers::read_f64(&variables.expand(value), 100.0))
-        .filter(|max| *max > 0.0)
-        .map(|max| {
-            let resolved = measure_names
-                .first()
-                .and_then(|name| crate::measure::evaluate(skin).get(name).cloned())
-                .unwrap_or_default();
-            let number = crate::readers::read_f64(&resolved, 0.0);
-            (number / max).clamp(0.0, 1.0)
-        })
+        .and_then(|name| lookup_value(values, name))
+        .map(ratio)
         .unwrap_or(0.0);
 
     BarMeter {
@@ -365,6 +364,29 @@ fn build_bar(skin: &Skin, options: &[(String, String)], variables: &Variables) -
             .map(|value| read_u32(&value, 0))
             .unwrap_or(0),
         value,
+    }
+}
+
+fn lookup_value<'a>(
+    values: &'a BTreeMap<String, MeasureValue>,
+    name: &str,
+) -> Option<&'a MeasureValue> {
+    values.get(name).or_else(|| {
+        values
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value)
+    })
+}
+
+fn ratio(measure: &MeasureValue) -> f64 {
+    let min = measure.min.unwrap_or(0.0);
+    let max = measure.max.unwrap_or(100.0);
+    let span = max - min;
+    if span.abs() < f64::EPSILON {
+        0.0
+    } else {
+        ((measure.number - min) / span).clamp(0.0, 1.0)
     }
 }
 

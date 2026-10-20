@@ -1,10 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::Serialize;
 
 use crate::windows::WindowFlags;
 use petrichor_core::logging::{self, Entry, Level};
+use petrichor_core::measure::{MeasureEngine, UpdateReport};
 use petrichor_core::render::{build_render_model, RenderModel};
 use petrichor_core::{build_skin, ApplicationConfig, Diagnostics, Registry, Skin};
 use petrichor_sys::{backend, SystemBackend};
@@ -138,9 +140,49 @@ fn window_flags(skin: &str) -> WindowFlags {
 }
 
 #[tauri::command]
-pub fn read_measures(path: String) -> BTreeMap<String, String> {
-    let (skin, _diagnostics) = build_skin(Path::new(&path));
-    petrichor_core::measure::evaluate(&skin)
+pub fn read_measures(
+    path: String,
+    store: tauri::State<'_, MeasureStore>,
+) -> BTreeMap<String, String> {
+    let Some(report) = store.update(Path::new(&path)) else {
+        return BTreeMap::new();
+    };
+
+    for action in &report.actions {
+        logging::logger().log(Level::Debug, Some("measures"), format!("Action {action}"));
+    }
+
+    report.strings
+}
+
+pub struct MeasureStore {
+    engines: Mutex<HashMap<PathBuf, MeasureEngine>>,
+}
+
+impl MeasureStore {
+    pub fn new() -> Self {
+        MeasureStore {
+            engines: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn update(&self, path: &Path) -> Option<UpdateReport> {
+        let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let mut engines = self.engines.lock().ok()?;
+
+        let engine = engines.entry(key).or_insert_with(|| {
+            let (skin, _diagnostics) = build_skin(path);
+            MeasureEngine::new(&skin)
+        });
+
+        Some(engine.tick(&backend()))
+    }
+}
+
+impl Default for MeasureStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[tauri::command]

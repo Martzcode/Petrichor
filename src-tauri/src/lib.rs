@@ -10,6 +10,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(windows::SkinWindows::new())
+        .manage(commands::MeasureStore::new())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();

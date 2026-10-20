@@ -73,6 +73,29 @@ journalisés comme tels et ignorés au rendu.
 ./scripts/snapshot.sh           # instantanés de rendu (listes de commandes de dessin)
 ```
 
+## Mesures
+
+Le moteur (`crates/petrichor-core/src/measure.rs`) maintient un état par skin et met à jour les
+valeurs à chaque cycle. Mesures prises en charge : `Time`, `Uptime`, `CPU`, `Memory`,
+`PhysicalMemory`, `String`, `Calc` et `Loop`.
+
+Options communes : `UpdateDivider`, `Disabled`, `Paused`, `MinValue`, `MaxValue`,
+`InvertMeasure`, `Substitute` et `RegExpSubstitute` (paires `"motif":"remplacement"`),
+`OnUpdateAction` et `OnChangeAction`. `Time` accepte `Format` (syntaxe `chrono`, par défaut
+`%H:%M:%S`), `CPU` accepte `Processor` (indice de cœur à partir de 0), `Loop` accepte
+`Start`/`Step`/`End`/`Reset`, et `Calc` accepte `Formula` (références aux mesures, `counter`).
+
+Les valeurs sont exposées via l'IPC `read_measures` et réinjectées dans le rendu à chaque
+intervalle `Update`. Les actions sont émises dans le rapport de mise à jour ; leur exécution
+complète (`!Update`, `!Redraw`, …) est branchée en Phase 4.
+
+Pour vérifier un build embarquant le frontend (sans serveur Angular) :
+
+```bash
+npm run build
+cargo run -p petrichor --features custom-protocol
+```
+
 ## Structure du dépôt
 
 ```
