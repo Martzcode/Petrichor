@@ -260,6 +260,16 @@ impl MeasureStore {
         self.with_engine(path, |engine| engine.variables().clone())
     }
 
+    pub fn measure_kind(&self, path: &Path, name: &str) -> Option<String> {
+        self.with_engine(path, |engine| engine.measure_kind(name).map(str::to_string))
+            .flatten()
+    }
+
+    pub fn command_measure(&self, path: &Path, name: &str, command: &str) -> bool {
+        self.with_engine(path, |engine| engine.command_measure(name, command))
+            .unwrap_or(false)
+    }
+
     pub fn set_variable(&self, path: &Path, name: &str, value: &str) {
         self.with_engine(path, |engine| engine.set_variable(name, value));
     }

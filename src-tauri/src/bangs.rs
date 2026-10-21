@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, EventTarget, LogicalPosition, Manager, WebviewWi
 use petrichor_core::bang::{self, Bang};
 use petrichor_core::logging::{self, Level};
 use petrichor_core::SkinState;
+use petrichor_sys::SystemBackend;
 
 use crate::commands::MeasureStore;
 use crate::persistence;
@@ -168,6 +169,38 @@ fn execute(
                 .info(label)
                 .ok_or_else(|| format!("skin introuvable : {label}"))?;
             measures.set_option(&info.path, section, option, value.trim());
+            emit(app, label, SkinCommand::Refresh)?;
+        }
+        "EMPTYBIN" | "EMPTYBINSILENT" => {
+            petrichor_sys::backend().empty_trash();
+        }
+        "OPENBIN" => {
+            petrichor_sys::backend().open_trash();
+        }
+        "COMMANDMEASURE" => {
+            let label = require_label(label)?;
+            let name = bang
+                .arg(0)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "mesure manquante".to_string())?;
+            let command = bang
+                .arg(1)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "commande manquante".to_string())?;
+            let info = windows
+                .info(label)
+                .ok_or_else(|| format!("skin introuvable : {label}"))?;
+            let kind = measures.measure_kind(&info.path, name);
+            let handled = if kind.as_deref() == Some("MEDIAKEY") {
+                petrichor_sys::backend().media_key(command)
+            } else {
+                measures.command_measure(&info.path, name, command)
+            };
+            if !handled {
+                return Err(format!(
+                    "commande de mesure non prise en charge : {command}"
+                ));
+            }
             emit(app, label, SkinCommand::Refresh)?;
         }
         "LOG" => {

@@ -103,31 +103,69 @@ rendering.
 
 The engine (`crates/petrichor-core/src/measure.rs`) maintains per-skin state and updates values
 on each cycle. Supported measures: `Time`, `Uptime`, `CPU`, `Memory`, `PhysicalMemory`,
-`String`, `Calc` and `Loop`.
+`SwapMemory`/`VirtualMemory`, `FreeDiskSpace`, `NetIn`/`NetOut`/`NetTotal`, `Process`,
+`RecycleManager`, `SysInfo`, `WifiStatus`, `WebParser`, `Registry`, `MediaKey`, `String`,
+`Calc` and `Loop`.
 
 Common options: `UpdateDivider`, `Disabled`, `Paused`, `MinValue`, `MaxValue`,
-`InvertMeasure`, `Substitute` and `RegExpSubstitute` (`"pattern":"replacement"` pairs),
-`OnUpdateAction` and `OnChangeAction`. `Time` accepts `Format` (`chrono` syntax, default
-`%H:%M:%S`), `CPU` accepts `Processor` (core index starting at 0), `Loop` accepts
-`Start`/`Step`/`End`/`Reset`, and `Calc` accepts `Formula` (measure references, `counter`).
+`InvertMeasure`, `AverageSize` (sliding average), `Substitute` and `RegExpSubstitute`
+(`"pattern":"replacement"` pairs), `OnUpdateAction`/`OnChangeAction`, `IfAbove*`, `IfBelow*`,
+`IfEqual*`, `IfCondition[N]`/`IfTrueAction[N]`/`IfFalseAction[N]` (with `IfConditionMode`) and
+`IfMatch[N]`/`IfMatchAction[N]`/`IfNotMatchAction[N]` (with `IfMatchMode`). `Time` accepts
+`Format` (`chrono` syntax, default `%H:%M:%S`), `CPU` accepts `Processor` (1 = first core,
+0/absent = global), `Loop` accepts `Start`/`Step`/`End`/`Reset`, and `Calc` accepts `Formula`
+(measure references, `counter`).
+
+`FreeDiskSpace` uses `Drive`, `Type`, `Label`, `Total`, `IgnoreRemovable` and `DiskQuota`;
+`Net*` use `Interface` (`BEST` by default), `Cumulative`, `UseBits`, `NetInSpeed`/`NetOutSpeed`
+and persist cumulative totals under `$XDG_STATE_HOME/petrichor/`. `Process` uses
+`ProcessName`; `RecycleManager` uses `RecycleType` (`COUNT`/`SIZE`) and supports
+`!EmptyBin`/`!EmptyBinSilent`/`!OpenBin`. `SysInfo` uses `SysInfoType`/`SysInfoData` (Annex A;
+monitor geometry comes from `xrandr`, with `PETRICHOR_SCREEN_GEOMETRY`/`PETRICHOR_SCREEN_SIZE`
+as fallback; idle time uses `xprintidle`, XScreenSaver, Mutter or logind hints, logon time comes
+from logind and sleep/wake times from the journal in the background). `WifiStatus` uses
+`WifiIntfID`/`WifiInfoType`/`WifiListStyle`/`WifiListLimit`, backed by NetworkManager D-Bus and
+`iw` (with `nmcli` fallback). `WebParser` supports asynchronous `Url` fetches (no UI blocking),
+parent/child chaining (`Url=[Parent]`), `Header*`, `RegExp` (PCRE-style via `fancy-regex`),
+`StringIndex`/`StringIndex2`, `UpdateRate`, `CodePage`, `DecodeCharacterReference`,
+`DecodeCodePoints`, `Download`/`DownloadFile`, `ErrorString`, `Debug`/`Debug2File`, `Flags`
+(`ForceReload`, `PragmaNoCache`, redirect, secure, certificate and `TempFile` flags) and its
+error/finish actions. `Registry` reads the virtual registry in
+`$XDG_CONFIG_HOME/petrichor/registry.json` (override with `PETRICHOR_REGISTRY`). `MediaKey`
+responds to `!CommandMeasure "Measure" "PlayPause"` through MPRIS D-Bus, with PipeWire
+(`wpctl`), PulseAudio (`pactl`) and ALSA (`amixer`) fallbacks for volume.
 
 Values are exposed through the `read_measures` IPC as a snapshot (`strings` for display and
 normalized `values` for graphs), then fed back into rendering on each `Update` interval. `OnUpdateAction` and `OnChangeAction` actions are executed by the bang engine (see
 below).
+
+### Known limitations
+
+- `SysInfo` `IDLE_TIME` relies on `xprintidle`, XScreenSaver, Mutter or logind hints. KDE
+  Wayland does not expose idle seconds, so the value stays `0` when none of these answers.
+- `LAST_SLEEP_TIME`/`LAST_WAKE_TIME` are read asynchronously from the systemd journal; the
+  first tick returns `0`. Timestamps use Rainmeter's 1601 epoch.
+- `WifiStatus` gets RX/TX rates and PHY from `iw` when available; without it, D-Bus still
+  provides TX and an estimated PHY, while `RXRATE` is `0`.
+- `WebParser` accepts `NoCookies`, `NoCacheWrite`, `NoAuth`, `Hyperlink` and `Resync` but does
+  not act on them. Downloads and HTTP fetches run outside the render thread.
+- `MediaKey` playback uses MPRIS D-Bus; volume relies on PipeWire, PulseAudio or ALSA tools.
+- `Registry` is a JSON-backed virtual registry; GSettings/dconf mapping is planned for Phase 10.
 
 ## Bangs and interactions
 
 The bang parser (`crates/petrichor-core/src/bang.rs`) accepts `[…]` strings, quoted arguments
 and the `!Rainmeter` prefix. MVP bangs are executed by `src-tauri/src/bangs.rs`:
 
-| Bang                                                                            | Effect                                        |
-| ------------------------------------------------------------------------------- | --------------------------------------------- |
-| `!Refresh`, `!Redraw`, `!Update`                                                | Reload, redraw or immediate update            |
-| `!Hide`, `!Show`, `!Toggle`                                                     | Window visibility                             |
-| `!Move`, `!ZPos`, `!ClickThrough`, `!Draggable`                                 | Window geometry and options                   |
-| `!SetVariable`, `!SetOption`                                                    | Variable or section option changed at runtime |
-| `!Log`, `!About`, `!Manage`                                                     | Log, About window or management               |
-| `!Quit`, `!RefreshApp`, `!ActivateConfig`, `!DeactivateConfig`, `!ToggleConfig` | Lifecycle                                     |
+| Bang                                                                            | Effect                                  |
+| ------------------------------------------------------------------------------- | --------------------------------------- |
+| `!Refresh`, `!Redraw`, `!Update`                                                | Reload, redraw or immediate update      |
+| `!Hide`, `!Show`, `!Toggle`                                                     | Window visibility                       |
+| `!Move`, `!ZPos`, `!ClickThrough`, `!Draggable`                                 | Window geometry and options             |
+| `!SetVariable`, `!SetOption`, `!CommandMeasure`                                 | Variable/option change, measure command |
+| `!EmptyBin`, `!EmptyBinSilent`, `!OpenBin`                                      | Empty or open the XDG trash             |
+| `!Log`, `!About`, `!Manage`                                                     | Log, About window or management         |
+| `!Quit`, `!RefreshApp`, `!ActivateConfig`, `!DeactivateConfig`, `!ToggleConfig` | Lifecycle                               |
 
 External bangs (`Bangs/` folder) are ignored with a warning. `#Variable#` references in
 arguments are resolved at execution time; `!SetOption` accepts a value containing spaces.
@@ -153,10 +191,12 @@ provided by `get_paths`.
 
 - `Clock/Clock.ini` — `Time` clock updated every second;
 - `System/Monitor.ini` — CPU and memory (`CPU`, `Memory`, `Bar`);
+- `System/Resources.ini` — disk, network, hostname and Wi-Fi (`FreeDiskSpace`, `NetIn`/`NetOut`,
+  `SysInfo`, `WifiStatus`);
 - `Counter/Counter.ini` — animated counter (`Calc`, `Loop`, `Update=250`); a click logs
   "Counter clicked" and hovering logs the cycle.
 
-All three enable `!Draggable "1"` via `OnRefreshAction`, so they can be dragged directly with a
+All four enable `!Draggable "1"` via `OnRefreshAction`, so they can be dragged directly with a
 held left click, without prior configuration.
 
 ## Performance
@@ -313,18 +353,58 @@ au rendu.
 
 Le moteur (`crates/petrichor-core/src/measure.rs`) maintient un état par skin et met à jour les
 valeurs à chaque cycle. Mesures prises en charge : `Time`, `Uptime`, `CPU`, `Memory`,
-`PhysicalMemory`, `String`, `Calc` et `Loop`.
+`PhysicalMemory`, `SwapMemory`/`VirtualMemory`, `FreeDiskSpace`, `NetIn`/`NetOut`/`NetTotal`,
+`Process`, `RecycleManager`, `SysInfo`, `WifiStatus`, `WebParser`, `Registry`, `MediaKey`,
+`String`, `Calc` et `Loop`.
 
 Options communes : `UpdateDivider`, `Disabled`, `Paused`, `MinValue`, `MaxValue`,
-`InvertMeasure`, `Substitute` et `RegExpSubstitute` (paires `"motif":"remplacement"`),
-`OnUpdateAction` et `OnChangeAction`. `Time` accepte `Format` (syntaxe `chrono`, par défaut
-`%H:%M:%S`), `CPU` accepte `Processor` (indice de cœur à partir de 0), `Loop` accepte
-`Start`/`Step`/`End`/`Reset`, et `Calc` accepte `Formula` (références aux mesures, `counter`).
+`InvertMeasure`, `AverageSize` (moyenne glissante), `Substitute` et `RegExpSubstitute`
+(paires `"motif":"remplacement"`), `OnUpdateAction`/`OnChangeAction`, `IfAbove*`, `IfBelow*`,
+`IfEqual*`, `IfCondition[N]`/`IfTrueAction[N]`/`IfFalseAction[N]` (avec `IfConditionMode`) et
+`IfMatch[N]`/`IfMatchAction[N]`/`IfNotMatchAction[N]` (avec `IfMatchMode`). `Time` accepte
+`Format` (syntaxe `chrono`, par défaut `%H:%M:%S`), `CPU` accepte `Processor` (1 = premier
+cœur, 0/absent = global), `Loop` accepte `Start`/`Step`/`End`/`Reset`, et `Calc` accepte
+`Formula` (références aux mesures, `counter`).
+
+`FreeDiskSpace` utilise `Drive`, `Type`, `Label`, `Total`, `IgnoreRemovable` et `DiskQuota` ;
+`Net*` utilisent `Interface` (`BEST` par défaut), `Cumulative`, `UseBits`,
+`NetInSpeed`/`NetOutSpeed` et persistent les cumuls dans `$XDG_STATE_HOME/petrichor/`.
+`Process` utilise `ProcessName` ; `RecycleManager` utilise `RecycleType` (`COUNT`/`SIZE`) et
+accepte `!EmptyBin`/`!EmptyBinSilent`/`!OpenBin`. `SysInfo` utilise
+`SysInfoType`/`SysInfoData` (Annexe A ; géométrie des moniteurs via `xrandr`, avec
+`PETRICHOR_SCREEN_GEOMETRY`/`PETRICHOR_SCREEN_SIZE` en repli ; temps d'inactivité via
+`xprintidle`, XScreenSaver, Mutter ou les indications de logind, heure de connexion via logind
+et heures de veille/réveil via le journal en arrière-plan). `WifiStatus` utilise
+`WifiIntfID`/`WifiInfoType`/`WifiListStyle`/`WifiListLimit`, adossé à NetworkManager D-Bus et
+`iw` (repli `nmcli`). `WebParser` gère les `Url` asynchrones (sans bloquer l'interface), le
+chaînage parent/enfant (`Url=[Parent]`), `Header*`, `RegExp` (style PCRE via `fancy-regex`),
+`StringIndex`/`StringIndex2`, `UpdateRate`, `CodePage`, `DecodeCharacterReference`,
+`DecodeCodePoints`, `Download`/`DownloadFile`, `ErrorString`, `Debug`/`Debug2File`, `Flags`
+(`ForceReload`, `PragmaNoCache`, redirections, secure, certificats et `TempFile`) ainsi que ses
+actions d'erreur/fin. `Registry` lit le registre virtuel
+`$XDG_CONFIG_HOME/petrichor/registry.json` (surcharge : `PETRICHOR_REGISTRY`). `MediaKey`
+répond à `!CommandMeasure "Mesure" "PlayPause"` via MPRIS D-Bus, avec repli PipeWire
+(`wpctl`), PulseAudio (`pactl`) et ALSA (`amixer`) pour le volume.
 
 Les valeurs sont exposées via l'IPC `read_measures` sous forme d'instantané (`strings` pour
 l'affichage et `values` normalisées pour les graphiques), puis réinjectées dans le rendu à
 chaque intervalle `Update`. Les actions `OnUpdateAction` et `OnChangeAction` sont exécutées par le
 moteur de bangs (voir ci-dessous).
+
+### Limites connues
+
+- `SysInfo` `IDLE_TIME` s'appuie sur `xprintidle`, XScreenSaver, Mutter ou les indications de
+  logind. KDE Wayland n'expose pas le temps d'inactivité en secondes : la valeur reste `0`
+  si aucune de ces sources ne répond.
+- `LAST_SLEEP_TIME`/`LAST_WAKE_TIME` sont lus de façon asynchrone dans le journal systemd ; le
+  premier cycle renvoie `0`. Les horodatages utilisent l'époque Rainmeter (1601).
+- `WifiStatus` obtient les débits RX/TX et le PHY via `iw` lorsqu'il est installé ; sinon le
+  D-Bus fournit le TX et un PHY estimé, et `RXRATE` vaut `0`.
+- `WebParser` accepte `NoCookies`, `NoCacheWrite`, `NoAuth`, `Hyperlink` et `Resync` sans les
+  appliquer. Les téléchargements et requêtes HTTP s'exécutent hors du thread de rendu.
+- `MediaKey` utilise MPRIS D-Bus pour la lecture ; le volume dépend des outils PipeWire,
+  PulseAudio ou ALSA.
+- `Registry` est un registre virtuel JSON ; le mapping GSettings/dconf est prévu en Phase 10.
 
 ## Bangs et interactions
 
@@ -337,7 +417,8 @@ arguments entre guillemets et le préfixe `!Rainmeter`. Les bangs MVP sont exéc
 | `!Refresh`, `!Redraw`, `!Update`                                                | Rechargement, redessin ou mise à jour immédiate |
 | `!Hide`, `!Show`, `!Toggle`                                                     | Visibilité de la fenêtre                        |
 | `!Move`, `!ZPos`, `!ClickThrough`, `!Draggable`                                 | Géométrie et options de fenêtre                 |
-| `!SetVariable`, `!SetOption`                                                    | Variable ou option de section modifiée à chaud  |
+| `!SetVariable`, `!SetOption`, `!CommandMeasure`                                 | Variable/option ou commande de mesure           |
+| `!EmptyBin`, `!EmptyBinSilent`, `!OpenBin`                                      | Vide ou ouvre la corbeille XDG                  |
 | `!Log`, `!About`, `!Manage`                                                     | Journal, fenêtre À propos ou gestion            |
 | `!Quit`, `!RefreshApp`, `!ActivateConfig`, `!DeactivateConfig`, `!ToggleConfig` | Cycle de vie                                    |
 
@@ -368,10 +449,12 @@ de skins et de journal fournis par `get_paths`.
 
 - `Clock/Clock.ini` — horloge `Time` actualisée chaque seconde ;
 - `System/Monitor.ini` — CPU et mémoire (`CPU`, `Memory`, `Bar`) ;
+- `System/Resources.ini` — disque, réseau, nom d'hôte et Wi-Fi (`FreeDiskSpace`,
+  `NetIn`/`NetOut`, `SysInfo`, `WifiStatus`) ;
 - `Counter/Counter.ini` — compteur animé (`Calc`, `Loop`, `Update=250`) ; un clic journalise
   « Compteur cliqué » et le survol journalise le cycle.
 
-Les trois activent `!Draggable "1"` via `OnRefreshAction` : ils peuvent donc être déplacés
+Les quatre activent `!Draggable "1"` via `OnRefreshAction` : ils peuvent donc être déplacés
 directement au clic gauche maintenu, sans réglage préalable.
 
 ## Performances
