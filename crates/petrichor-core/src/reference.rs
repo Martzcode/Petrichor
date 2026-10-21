@@ -21,7 +21,9 @@ impl std::error::Error for ReferenceError {}
 
 pub type ReferenceResult<T> = std::result::Result<T, ReferenceError>;
 
-#[derive(Debug, Clone, PartialEq)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MeasureValue {
     pub number: f64,
     pub string: Option<String>,

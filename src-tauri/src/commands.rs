@@ -8,6 +8,7 @@ use crate::persistence;
 use crate::windows::WindowFlags;
 use petrichor_core::logging::{self, Entry, Level};
 use petrichor_core::measure::{MeasureEngine, UpdateReport};
+use petrichor_core::reference::MeasureValue;
 use petrichor_core::render::{build_render_model_with_options, RenderModel};
 use petrichor_core::{build_skin, build_skin_with_overrides, Diagnostics, Registry, Skin};
 use petrichor_sys::{backend, SystemBackend};
@@ -29,6 +30,12 @@ pub struct SystemInfo {
 pub struct SkinLoadResult {
     pub skin: Skin,
     pub diagnostics: Diagnostics,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MeasureSnapshot {
+    pub strings: BTreeMap<String, String>,
+    pub values: BTreeMap<String, MeasureValue>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -168,9 +175,12 @@ pub fn read_measures(
     windows: tauri::State<'_, crate::windows::SkinWindows>,
     store: tauri::State<'_, MeasureStore>,
     path: String,
-) -> BTreeMap<String, String> {
+) -> MeasureSnapshot {
     let Some(report) = store.update(Path::new(&path)) else {
-        return BTreeMap::new();
+        return MeasureSnapshot {
+            strings: BTreeMap::new(),
+            values: BTreeMap::new(),
+        };
     };
 
     if !report.actions.is_empty() {
@@ -180,7 +190,10 @@ pub fn read_measures(
         }
     }
 
-    report.strings
+    MeasureSnapshot {
+        strings: report.strings,
+        values: report.values,
+    }
 }
 
 #[tauri::command]

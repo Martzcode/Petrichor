@@ -84,8 +84,16 @@ cargo build --release -p petrichor --features custom-protocol,dev-harness
 The engine computes a _render model_ (`RenderModel`) in Rust: options merged with `MeterStyle`,
 resolved variables, geometry (absolute `X`/`Y`, `r`, `R`), background and measure values. The
 Angular frontend (`src/renderer/`) computes the layout then draws on a `canvas` (background,
-`String`, `Image`, `Bar` meters). Meters not yet supported are logged as such and ignored
-during rendering.
+`String`, `Image`, `Bar`, `Histogram`, `Line`, `Rotator`, `RoundLine`, `Bitmap`, `Button` and
+`Shape` meters). `String` supports inline formatting (`InlineSetting`/`InlinePattern`),
+`Shape` supports `Rectangle`/`Ellipse`/`Line`/`Arc`/`Curve`/`Path`, per-shape
+`Offset`/`Rotate`/`Scale`/`Skew` and nested `Combine` modes (`Union`, `Xor`, `Intersect`,
+`Exclude`). Nested `Container` meters clip recursively, `TransformationMatrix` transforms them,
+`BevelType`/`AntiAlias` control background rendering, images support `Crop`, `Greyscale`,
+`TintColor`, `ColorMatrix`, `EXIF`, `Flip`, `Rotate`, `ScaleMargins` (9-slice) and
+`PreserveAspectRatio`, `BitmapTransitionFrames` animates bitmap frames, `Button` hit-testing
+samples image alpha, and `ToolTip*` options display a tooltip on hover. Meters not yet supported are logged as such and ignored during
+rendering.
 
 ```bash
 ./scripts/snapshot.sh           # rendering snapshots (draw command lists)
@@ -103,8 +111,8 @@ Common options: `UpdateDivider`, `Disabled`, `Paused`, `MinValue`, `MaxValue`,
 `%H:%M:%S`), `CPU` accepts `Processor` (core index starting at 0), `Loop` accepts
 `Start`/`Step`/`End`/`Reset`, and `Calc` accepts `Formula` (measure references, `counter`).
 
-Values are exposed through the `read_measures` IPC and fed back into rendering on each `Update`
-interval. `OnUpdateAction` and `OnChangeAction` actions are executed by the bang engine (see
+Values are exposed through the `read_measures` IPC as a snapshot (`strings` for display and
+normalized `values` for graphs), then fed back into rendering on each `Update` interval. `OnUpdateAction` and `OnChangeAction` actions are executed by the bang engine (see
 below).
 
 ## Bangs and interactions
@@ -285,8 +293,17 @@ cargo build --release -p petrichor --features custom-protocol,dev-harness
 Le moteur calcule en Rust un _modèle de rendu_ (`RenderModel`) : options fusionnées avec les
 `MeterStyle`, variables résolues, géométrie (`X`/`Y` absolu, `r`, `R`), fond et valeurs de
 mesures. Le frontend Angular (`src/renderer/`) calcule la mise en page puis dessine sur un
-`canvas` (fond, meters `String`, `Image`, `Bar`). Les meters non encore supportés sont
-journalisés comme tels et ignorés au rendu.
+`canvas` (fond, meters `String`, `Image`, `Bar`, `Histogram`, `Line`, `Rotator`, `RoundLine`,
+`Bitmap`, `Button` et `Shape`). Les `String` acceptent le formatage inline
+(`InlineSetting`/`InlinePattern`), les `Shape` gèrent `Rectangle`/`Ellipse`/`Line`/`Arc`/`Curve`/
+`Path`, les transformations `Offset`/`Rotate`/`Scale`/`Skew` et les combinaisons imbriquées
+`Union`, `Xor`, `Intersect`, `Exclude`. Les `Container` imbriqués découpent récursivement les
+enfants, `TransformationMatrix` les transforme, `BevelType`/`AntiAlias` contrôlent le fond, les
+images acceptent `Crop`, `Greyscale`, `TintColor`, `ColorMatrix`, `EXIF`, `Flip`, `Rotate`,
+`ScaleMargins` (9 tranches) et `PreserveAspectRatio`, `BitmapTransitionFrames` anime les frames
+Bitmap, le hit-test des `Button` échantillonne l'alpha de l'image, et les options `ToolTip*`
+affichent une infobulle au survol. Les meters non encore supportés sont journalisés comme tels et ignorés
+au rendu.
 
 ```bash
 ./scripts/snapshot.sh           # instantanés de rendu (listes de commandes de dessin)
@@ -304,8 +321,9 @@ Options communes : `UpdateDivider`, `Disabled`, `Paused`, `MinValue`, `MaxValue`
 `%H:%M:%S`), `CPU` accepte `Processor` (indice de cœur à partir de 0), `Loop` accepte
 `Start`/`Step`/`End`/`Reset`, et `Calc` accepte `Formula` (références aux mesures, `counter`).
 
-Les valeurs sont exposées via l'IPC `read_measures` et réinjectées dans le rendu à chaque
-intervalle `Update`. Les actions `OnUpdateAction` et `OnChangeAction` sont exécutées par le
+Les valeurs sont exposées via l'IPC `read_measures` sous forme d'instantané (`strings` pour
+l'affichage et `values` normalisées pour les graphiques), puis réinjectées dans le rendu à
+chaque intervalle `Update`. Les actions `OnUpdateAction` et `OnChangeAction` sont exécutées par le
 moteur de bangs (voir ci-dessous).
 
 ## Bangs et interactions

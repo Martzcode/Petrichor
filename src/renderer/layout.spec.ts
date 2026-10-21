@@ -45,6 +45,8 @@ function stringMeter(overrides: Partial<StringMeter> = {}): StringMeter {
     postfix: '',
     num_of_decimals: -1,
     angle: 0,
+    inline_settings: [],
+    inline_patterns: [],
     ...common({ kind: 'String' }),
     ...overrides,
   };
@@ -231,5 +233,78 @@ describe('hitTest', () => {
 
   it('returns null outside every box', () => {
     expect(hitTest(boxes(), 100, 100)).toBeNull();
+  });
+
+  it('skips boxes rejected by an alpha hit test', () => {
+    expect(hitTest(boxes(), 5, 5, () => false)).toBeNull();
+    expect(hitTest(boxes(), 5, 5, () => true)?.meter.name).toBe('Top');
+  });
+
+  it('clips children to their container and hides them outside', () => {
+    const skin = model([
+      stringMeter({
+        name: 'Frame',
+        width: 20,
+        height: 20,
+        text: 'x',
+      }),
+      stringMeter({
+        name: 'Child',
+        x: { value: 10, relative: 'absolute' },
+        y: { value: 10, relative: 'absolute' },
+        width: 20,
+        height: 20,
+        text: 'y',
+        container: 'Frame',
+      }),
+      stringMeter({
+        name: 'Far',
+        x: { value: 60, relative: 'absolute' },
+        y: { value: 60, relative: 'absolute' },
+        width: 20,
+        height: 20,
+        text: 'z',
+        container: 'Frame',
+      }),
+    ]);
+    const boxes = layoutSkin(skin, measure(10, 10)).boxes;
+    expect(boxes[1].clip).toEqual({ x: 10, y: 10, width: 10, height: 10 });
+    expect(boxes[2].clip?.width).toBe(0);
+    expect(hitTest(boxes, 15, 15)?.meter.name).toBe('Child');
+    expect(hitTest(boxes, 65, 65)).toBeNull();
+  });
+
+  it('clips nested containers recursively', () => {
+    const skin = model([
+      stringMeter({ name: 'Outer', width: 40, height: 40, text: 'o' }),
+      stringMeter({
+        name: 'Middle',
+        width: 30,
+        height: 30,
+        text: 'm',
+        container: 'Outer',
+      }),
+      stringMeter({
+        name: 'Inner',
+        x: { value: 20, relative: 'absolute' },
+        y: { value: 20, relative: 'absolute' },
+        width: 20,
+        height: 20,
+        text: 'i',
+        container: 'Middle',
+      }),
+    ]);
+    const boxes = layoutSkin(skin, measure(10, 10)).boxes;
+    expect(boxes[2].clip).toEqual({ x: 20, y: 20, width: 10, height: 10 });
+  });
+
+  it('breaks container cycles', () => {
+    const skin = model([
+      stringMeter({ name: 'A', width: 20, height: 20, container: 'B' }),
+      stringMeter({ name: 'B', width: 20, height: 20, container: 'A' }),
+    ]);
+    const boxes = layoutSkin(skin, measure(10, 10)).boxes;
+    expect(boxes[0].clip?.width).toBe(0);
+    expect(boxes[1].clip?.width).toBe(0);
   });
 });

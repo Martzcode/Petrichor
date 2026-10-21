@@ -9,9 +9,22 @@ import {
   viewChild,
 } from '@angular/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { hitTest, layoutSkin, MeterBox, SkinLayout } from '../renderer/layout';
-import { fontString, renderSkin } from '../renderer/renderer';
-import { ImageMeter, RenderModel, StringMeter } from '../renderer/skin-model';
+import {
+  hitTest,
+  layoutSkin,
+  MeterBox,
+  SizedMeter,
+  SkinLayout,
+} from '../renderer/layout';
+import { fontString, MeterTransition, renderSkin } from '../renderer/renderer';
+import { ButtonMeter, RenderModel, StringMeter } from '../renderer/skin-model';
+import {
+  appendHistories,
+  MeterHistories,
+  resetHistories,
+  updateMeterValues,
+} from '../renderer/values';
+import { TextStyle } from '../renderer/inline';
 import { isTauri, PetrichorIpc, SkinCommand } from '../shared/ipc';
 
 @Component({
@@ -25,12 +38,17 @@ export class SkinView implements AfterViewInit, OnDestroy {
   private readonly canvasRef =
     viewChild<ElementRef<HTMLCanvasElement>>('canvas');
   protected readonly error = signal<string | null>(null);
+  protected readonly tooltip = signal<TooltipState | null>(null);
 
   private label = '';
   private path = '';
   private model: RenderModel | null = null;
   private layout: SkinLayout | null = null;
   private images = new Map<string, HTMLImageElement>();
+  private alphaMaps = new Map<string, ImageData | null>();
+  private histories: MeterHistories = new Map();
+  private transitions = new Map<string, MeterTransition>();
+  private pressedMeter: string | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private watchdog: ReturnType<typeof setTimeout> | null = null;
   private unlistenCommand: (() => void) | null = null;
@@ -112,6 +130,10 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
     await this.loadFonts(result.model);
     this.images = await this.loadImages(result.model);
+    this.alphaMaps.clear();
+    this.transitions.clear();
+    resetHistories(this.histories);
+    appendHistories(this.histories, result.model);
 
     const layout = this.render();
     this.lastSize = { width: layout.width, height: layout.height };
@@ -140,7 +162,10 @@ export class SkinView implements AfterViewInit, OnDestroy {
     if (this.updating || !this.model) return;
     this.updating = true;
     try {
-      this.model.measure_values = await this.ipc.readMeasures(this.path);
+      const snapshot = await this.ipc.readMeasures(this.path);
+      this.model.measure_values = snapshot.strings;
+      updateMeterValues(this.model, snapshot.values);
+      appendHistories(this.histories, this.model);
       const layout = this.render();
       if (
         this.model.dynamic_window_size &&
@@ -179,6 +204,7 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
   onMouseMove(event: MouseEvent): void {
     const box = this.boxAt(event);
+    this.updateTooltip(box, event);
     const name = box?.meter.name ?? null;
     const previous = this.hoveredBox?.meter.name ?? null;
 
@@ -197,12 +223,16 @@ export class SkinView implements AfterViewInit, OnDestroy {
     const leaving = this.hoveredBox?.meter.mouse_leave_action;
     if (leaving) void this.execute(leaving);
     this.hoveredBox = null;
+    this.tooltip.set(null);
+    if (this.model) this.render();
     this.updateCursor(null);
   }
 
   onMouseDown(event: MouseEvent): void {
     if (event.button !== 0) return;
     this.pressPosition = { x: event.clientX, y: event.clientY };
+    this.pressedMeter = this.boxAt(event)?.meter.name ?? null;
+    if (this.pressedMeter && this.model) this.render();
     if (!this.draggable) return;
     this.dragging = true;
     void this.startDragging();
@@ -211,7 +241,9 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
   onMouseUp(event: MouseEvent): void {
     const press = this.pressPosition;
+    const pressedMeter = this.pressedMeter;
     this.pressPosition = null;
+    this.pressedMeter = null;
     const wasDragging = this.dragging;
     this.dragging = false;
 
@@ -227,7 +259,14 @@ export class SkinView implements AfterViewInit, OnDestroy {
       return;
     }
 
-    const action = this.boxAt(event)?.meter.left_mouse_up_action;
+    const box = this.boxAt(event);
+    const meter = box?.meter;
+    if (meter?.type === 'button' && meter.name === pressedMeter) {
+      const command = (meter as ButtonMeter).command;
+      if (command) void this.execute(command);
+    }
+    if (this.model) this.render();
+    const action = box?.meter.left_mouse_up_action;
     if (action) void this.execute(action);
   }
 
@@ -241,7 +280,79 @@ export class SkinView implements AfterViewInit, OnDestroy {
       layout.boxes,
       event.clientX - rect.left,
       event.clientY - rect.top,
+      (box, x, y) => this.buttonOpaque(box, x, y),
     );
+  }
+
+  private buttonOpaque(box: MeterBox, x: number, y: number): boolean {
+    const meter = box.meter;
+    if (meter.type !== 'button' || !meter.image) return true;
+    if (meter.solid_color && meter.solid_color.a > 0) return true;
+    if (box.content.width <= 0 || box.content.height <= 0) return false;
+
+    const image = this.images.get(meter.image);
+    if (!image) return true;
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (width <= 0 || height <= 0) return true;
+
+    const data = this.alphaData(meter.image, image, width, height);
+    if (!data) return true;
+
+    const frameWidth = width / 3;
+    const sourceX = Math.min(
+      frameWidth - 1,
+      Math.max(0, ((x - box.content.x) / box.content.width) * frameWidth),
+    );
+    const sourceY = Math.min(
+      height - 1,
+      Math.max(0, ((y - box.content.y) / box.content.height) * height),
+    );
+    const index = (Math.floor(sourceY) * width + Math.floor(sourceX)) * 4 + 3;
+    return (data.data[index] ?? 0) > 0;
+  }
+
+  private alphaData(
+    path: string,
+    image: HTMLImageElement,
+    width: number,
+    height: number,
+  ): ImageData | null {
+    if (this.alphaMaps.has(path)) return this.alphaMaps.get(path) ?? null;
+    let data: ImageData | null = null;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+      if (context) {
+        context.drawImage(image, 0, 0, width, height);
+        data = context.getImageData(0, 0, width, height);
+      }
+    } catch {
+      data = null;
+    }
+    this.alphaMaps.set(path, data);
+    return data;
+  }
+
+  private updateTooltip(box: MeterBox | null, event: MouseEvent): void {
+    const meter = box?.meter;
+    const text = meter?.tooltip_text;
+    if (!meter || !text || meter.tooltip_hidden) {
+      this.tooltip.set(null);
+      return;
+    }
+
+    this.tooltip.set({
+      text,
+      title: meter.tooltip_title ?? null,
+      icon: tooltipIcon(meter.tooltip_icon ?? null),
+      width: meter.tooltip_width ?? 1000,
+      type: meter.tooltip_type ?? false,
+      x: event.clientX + 12,
+      y: event.clientY + 16,
+    });
   }
 
   private updateCursor(box: MeterBox | null): void {
@@ -252,7 +363,8 @@ export class SkinView implements AfterViewInit, OnDestroy {
     const hasAction =
       meter?.left_mouse_up_action ||
       meter?.mouse_over_action ||
-      meter?.mouse_leave_action;
+      meter?.mouse_leave_action ||
+      (meter?.type === 'button' && meter.command);
     canvas.style.cursor = hasAction
       ? 'pointer'
       : this.draggable
@@ -309,7 +421,20 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
     this.layout = layout;
     this.prepareCanvas(canvas, ctx, layout);
-    renderSkin(ctx, model, layout, (path) => this.images.get(path) ?? null);
+    renderSkin(
+      ctx,
+      model,
+      layout,
+      (path) => this.images.get(path) ?? null,
+      this.histories,
+      {
+        hovered: this.hoveredBox?.meter.name ?? null,
+        pressed: this.pressedMeter,
+        transitions: this.transitions,
+        now:
+          typeof performance === 'undefined' ? Date.now() : performance.now(),
+      },
+    );
     return layout;
   }
 
@@ -317,22 +442,23 @@ export class SkinView implements AfterViewInit, OnDestroy {
     ctx: CanvasRenderingContext2D,
     meter: StringMeter,
     text: string,
+    style?: TextStyle,
   ): { width: number; height: number } {
     ctx.save();
-    ctx.font = fontString(meter);
+    ctx.font = fontString(meter, style);
     const metrics = ctx.measureText(text || ' ');
     ctx.restore();
     const ascent = metrics.actualBoundingBoxAscent || 0;
     const descent = metrics.actualBoundingBoxDescent || 0;
     return {
       width: metrics.width,
-      height: ascent + descent || meter.font_size * 1.2,
+      height: ascent + descent || (style?.size ?? meter.font_size) * 1.2,
     };
   }
 
   private imageSize(
     images: Map<string, HTMLImageElement>,
-    meter: ImageMeter,
+    meter: SizedMeter,
   ): { width: number; height: number } | null {
     if (!meter.image) return null;
     const image = images.get(meter.image);
@@ -363,7 +489,15 @@ export class SkinView implements AfterViewInit, OnDestroy {
     const paths = new Set<string>();
     if (model.background.image) paths.add(model.background.image);
     for (const meter of model.meters) {
-      if (meter.type === 'image' && meter.image) paths.add(meter.image);
+      if (
+        (meter.type === 'image' ||
+          meter.type === 'rotator' ||
+          meter.type === 'bitmap' ||
+          meter.type === 'button') &&
+        meter.image
+      ) {
+        paths.add(meter.image);
+      }
     }
 
     const images = new Map<string, HTMLImageElement>();
@@ -409,4 +543,31 @@ export class SkinView implements AfterViewInit, OnDestroy {
 function fontFamily(path: string): string {
   const file = path.split('/').pop() ?? 'local';
   return file.replace(/\.(ttf|otf|ttc|woff2?)$/i, '');
+}
+
+interface TooltipState {
+  text: string;
+  title: string | null;
+  icon: string | null;
+  width: number;
+  type: boolean;
+  x: number;
+  y: number;
+}
+
+function tooltipIcon(value: string | null): string | null {
+  switch ((value ?? '').toUpperCase()) {
+    case 'INFO':
+      return 'i';
+    case 'WARNING':
+      return '!';
+    case 'ERROR':
+      return 'x';
+    case 'QUESTION':
+      return '?';
+    case 'SHIELD':
+      return 'S';
+    default:
+      return null;
+  }
 }

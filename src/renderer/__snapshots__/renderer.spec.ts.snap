@@ -25,6 +25,10 @@ exports[`renderSkin > matches the reference draw list 1`] = `
     "method": "save",
   },
   {
+    "args": [],
+    "method": "save",
+  },
+  {
     "args": [
       "CPU",
       2,
@@ -37,6 +41,14 @@ exports[`renderSkin > matches the reference draw list 1`] = `
     "method": "restore",
   },
   {
+    "args": [],
+    "method": "restore",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
     "args": [
       0,
       24,
@@ -44,6 +56,648 @@ exports[`renderSkin > matches the reference draw list 1`] = `
       10,
     ],
     "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+]
+`;
+
+exports[`renderSkin > meter snapshots > matches the bar meter snapshot 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      100,
+      10,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      100,
+      10,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [
+      0,
+      0,
+      25,
+      10,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+]
+`;
+
+exports[`renderSkin > meter snapshots > matches the bitmap meter snapshot 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      40,
+      40,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      40,
+      40,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [
+      {
+        "height": 20,
+        "width": 40,
+      },
+      20,
+      0,
+      4,
+      20,
+      0,
+      0,
+      40,
+      40,
+    ],
+    "method": "drawImage",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+]
+`;
+
+exports[`renderSkin > meter snapshots > matches the button meter snapshot 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      20,
+      10,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      20,
+      10,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [
+      {
+        "height": 10,
+        "width": 30,
+      },
+      20,
+      0,
+      10,
+      10,
+      0,
+      0,
+      20,
+      10,
+    ],
+    "method": "drawImage",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+]
+`;
+
+exports[`renderSkin > meter snapshots > matches the histogram meter snapshot 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      100,
+      40,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      100,
+      40,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [
+      97,
+      32,
+      1,
+      8,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [
+      98,
+      24,
+      1,
+      16,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [
+      99,
+      8,
+      1,
+      32,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+]
+`;
+
+exports[`renderSkin > meter snapshots > matches the image meter snapshot 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      40,
+      40,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      40,
+      40,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [
+      {
+        "height": 20,
+        "width": 40,
+      },
+      0,
+      0,
+      40,
+      20,
+      0,
+      0,
+      40,
+      40,
+    ],
+    "method": "drawImage",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+]
+`;
+
+exports[`renderSkin > meter snapshots > matches the line meter snapshot 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      100,
+      40,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      100,
+      40,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [],
+    "method": "beginPath",
+  },
+  {
+    "args": [
+      97.97979797979798,
+      32,
+    ],
+    "method": "moveTo",
+  },
+  {
+    "args": [
+      98.98989898989899,
+      24,
+    ],
+    "method": "lineTo",
+  },
+  {
+    "args": [
+      100,
+      7.999999999999998,
+    ],
+    "method": "lineTo",
+  },
+  {
+    "args": [],
+    "method": "stroke",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+]
+`;
+
+exports[`renderSkin > meter snapshots > matches the rotator meter snapshot 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      40,
+      40,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      40,
+      40,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [
+      20,
+      20,
+    ],
+    "method": "translate",
+  },
+  {
+    "args": [
+      1.5707963267948966,
+    ],
+    "method": "rotate",
+  },
+  {
+    "args": [
+      {
+        "height": 20,
+        "width": 40,
+      },
+      -20,
+      -10,
+      40,
+      20,
+    ],
+    "method": "drawImage",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+]
+`;
+
+exports[`renderSkin > meter snapshots > matches the round line meter snapshot 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      40,
+      40,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      40,
+      40,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [],
+    "method": "beginPath",
+  },
+  {
+    "args": [
+      20,
+      20,
+      20,
+      0,
+      3.141592653589793,
+      false,
+    ],
+    "method": "arc",
+  },
+  {
+    "args": [],
+    "method": "stroke",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+]
+`;
+
+exports[`renderSkin > meter snapshots > matches the shape meter snapshot 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      50,
+      30,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      50,
+      30,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [
+      0,
+      0,
+    ],
+    "method": "translate",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [],
+    "method": "beginPath",
+  },
+  {
+    "args": [
+      3,
+      0,
+    ],
+    "method": "moveTo",
+  },
+  {
+    "args": [
+      17,
+      0,
+    ],
+    "method": "lineTo",
+  },
+  {
+    "args": [
+      20,
+      0,
+      20,
+      3,
+    ],
+    "method": "quadraticCurveTo",
+  },
+  {
+    "args": [
+      20,
+      7,
+    ],
+    "method": "lineTo",
+  },
+  {
+    "args": [
+      20,
+      10,
+      17,
+      10,
+    ],
+    "method": "quadraticCurveTo",
+  },
+  {
+    "args": [
+      3,
+      10,
+    ],
+    "method": "lineTo",
+  },
+  {
+    "args": [
+      0,
+      10,
+      0,
+      7,
+    ],
+    "method": "quadraticCurveTo",
+  },
+  {
+    "args": [
+      0,
+      3,
+    ],
+    "method": "lineTo",
+  },
+  {
+    "args": [
+      0,
+      0,
+      3,
+      0,
+    ],
+    "method": "quadraticCurveTo",
+  },
+  {
+    "args": [],
+    "method": "fill",
+  },
+  {
+    "args": [],
+    "method": "stroke",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [],
+    "method": "beginPath",
+  },
+  {
+    "args": [
+      30,
+      10,
+      14.142135623730951,
+      14.142135623730951,
+      0,
+      -2.356194490192345,
+      0.7853981633974483,
+      false,
+    ],
+    "method": "ellipse",
+  },
+  {
+    "args": [],
+    "method": "stroke",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+]
+`;
+
+exports[`renderSkin > meter snapshots > matches the string meter snapshot 1`] = `
+[
+  {
+    "args": [
+      0,
+      0,
+      30,
+      12,
+    ],
+    "method": "clearRect",
+  },
+  {
+    "args": [
+      0,
+      0,
+      30,
+      12,
+    ],
+    "method": "fillRect",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [],
+    "method": "save",
+  },
+  {
+    "args": [
+      "42",
+      0,
+      0,
+    ],
+    "method": "fillText",
+  },
+  {
+    "args": [],
+    "method": "restore",
+  },
+  {
+    "args": [],
+    "method": "restore",
   },
 ]
 `;

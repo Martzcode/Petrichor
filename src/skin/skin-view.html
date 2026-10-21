@@ -8,4 +8,19 @@
 
 @if (error(); as message) {
 <pre class="skin-error">{{ message }}</pre>
+} @if (tooltip(); as tip) {
+<div
+  class="skin-tooltip"
+  [class.balloon]="tip.type"
+  [style.left.px]="tip.x"
+  [style.top.px]="tip.y"
+  [style.max-width.px]="tip.width"
+>
+  @if (tip.icon; as icon) {
+  <span class="tooltip-icon">{{ icon }}</span>
+  } @if (tip.title; as title) {
+  <strong class="tooltip-title">{{ title }}</strong>
+  }
+  <span class="tooltip-text">{{ tip.text }}</span>
+</div>
 }

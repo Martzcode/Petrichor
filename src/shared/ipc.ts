@@ -1,5 +1,5 @@
 import { inject, Injectable, signal } from '@angular/core';
-import type { RenderModel } from '../renderer/skin-model';
+import type { MeasureSnapshot, RenderModel } from '../renderer/skin-model';
 
 declare global {
   interface Window {
@@ -201,10 +201,10 @@ export class PetrichorIpc {
     return invoke<RenderLoadResult>('load_render_model', { path });
   }
 
-  async readMeasures(path: string): Promise<Record<string, string>> {
-    if (!this.available()) return {};
+  async readMeasures(path: string): Promise<MeasureSnapshot> {
+    if (!this.available()) return { strings: {}, values: {} };
     const { invoke } = await import('@tauri-apps/api/core');
-    return invoke<Record<string, string>>('read_measures', { path });
+    return invoke<MeasureSnapshot>('read_measures', { path });
   }
 
   async executeBang(label: string | null, command: string): Promise<void> {

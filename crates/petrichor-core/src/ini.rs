@@ -306,6 +306,9 @@ fn parse_section_header(line: &str) -> Option<String> {
 }
 
 fn strip_inline_comment(value: &str) -> String {
+    if is_number_list(value, ';') {
+        return value.trim().to_string();
+    }
     let mut result = String::with_capacity(value.len());
     for ch in value.chars() {
         if ch == ';' {
@@ -314,6 +317,15 @@ fn strip_inline_comment(value: &str) -> String {
         result.push(ch);
     }
     result.trim().to_string()
+}
+
+fn is_number_list(value: &str, separator: char) -> bool {
+    let parts: Vec<&str> = value
+        .split(separator)
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    parts.len() > 1 && parts.iter().all(|part| part.parse::<f32>().is_ok())
 }
 
 #[cfg(test)]
@@ -355,6 +367,12 @@ Text=Bonjour #Nom#
     fn strips_inline_comments() {
         let doc = IniDocument::parse("[S]\nKey=value ; note\n");
         assert_eq!(doc.get("S", "Key"), Some("value"));
+    }
+
+    #[test]
+    fn keeps_transformation_matrix_values() {
+        let doc = IniDocument::parse("[S]\nMatrix=1;0;0;1;5;6\n");
+        assert_eq!(doc.get("S", "Matrix"), Some("1;0;0;1;5;6"));
     }
 
     #[test]
