@@ -3636,6 +3636,18 @@ impl UsageMonitorMeasure {
             }
             !blacklist.iter().any(|value| lower.contains(value))
         });
+        let name_option = context.option_or("Name", "");
+        if !name_option.trim().is_empty() {
+            let name = name_option.trim().to_ascii_lowercase();
+            let pid = name
+                .strip_prefix("pid_")
+                .unwrap_or(&name)
+                .parse::<u32>()
+                .ok();
+            entries.retain(|(entry_name, entry_pid, _)| {
+                entry_name.to_ascii_lowercase().contains(&name) || pid == Some(*entry_pid)
+            });
+        }
         if rollup {
             let mut grouped: BTreeMap<String, f64> = BTreeMap::new();
             for (name, _, value) in entries {
@@ -3651,22 +3663,9 @@ impl UsageMonitorMeasure {
                 .map(|(name, value)| (name, 0, value))
                 .collect();
         }
-        let name_option = context.option_or("Name", "");
         let index = context.number_option("Index", 0.0) as i64;
         let selected = if !name_option.trim().is_empty() {
-            let name = name_option.trim().to_ascii_lowercase();
-            let pid = name
-                .strip_prefix("pid_")
-                .unwrap_or(&name)
-                .parse::<u32>()
-                .ok();
-            entries
-                .iter()
-                .filter(|(entry_name, entry_pid, _)| {
-                    entry_name.to_ascii_lowercase().contains(&name) || pid == Some(*entry_pid)
-                })
-                .map(|(_, _, value)| *value)
-                .sum::<f64>()
+            entries.iter().map(|(_, _, value)| *value).sum::<f64>()
         } else if index < 0 {
             if entries.is_empty() {
                 0.0
@@ -3824,6 +3823,14 @@ impl UsageMonitorMeasure {
             }
             !blacklist.iter().any(|value| lower.contains(value))
         });
+        let name_option = context.option_or("Name", "");
+        if !name_option.trim().is_empty() {
+            let name = name_option.trim().to_ascii_lowercase();
+            let pid = name.parse::<u32>().ok();
+            entries.retain(|(entry_name, entry_pid, _)| {
+                entry_name.to_ascii_lowercase().contains(&name) || pid == Some(*entry_pid)
+            });
+        }
 
         if rollup {
             let mut grouped: BTreeMap<String, f64> = BTreeMap::new();
@@ -3836,19 +3843,9 @@ impl UsageMonitorMeasure {
                 .collect();
         }
 
-        let name_option = context.option_or("Name", "");
         let index = context.number_option("Index", 0.0) as i64;
         let selected = if !name_option.trim().is_empty() {
-            let name = name_option.trim().to_ascii_lowercase();
-            let pid = name.parse::<u32>().ok();
-            entries
-                .iter()
-                .filter(|(entry_name, entry_pid, _)| {
-                    (!name.is_empty() && entry_name.to_ascii_lowercase().contains(&name))
-                        || pid == Some(*entry_pid)
-                })
-                .map(|(_, _, value)| *value)
-                .sum::<f64>()
+            entries.iter().map(|(_, _, value)| *value).sum::<f64>()
         } else if index < 0 {
             if entries.is_empty() {
                 0.0
@@ -5584,19 +5581,19 @@ mod tests {
 
     #[test]
     fn usage_monitor_process_counters_and_filters() {
-        let sample = process_samples()
-            .into_values()
-            .max_by_key(|sample| sample.rss_kb)
-            .expect("processus courant");
+        let pid = std::process::id();
+        let sample = process_samples().remove(&pid).expect("processus courant");
+        assert!(sample.handles > 0);
+        assert!(sample.threads > 0);
+        let pid_value = pid.to_string();
         let backend = MockBackend::new();
         let vars = Variables::new();
         let opts = options(&[
             ("Alias", "CUSTOM"),
             ("Category", "Process"),
             ("Counter", "Working Set - Private"),
-            ("Whitelist", &sample.name),
+            ("Name", &pid_value),
             ("RawValue", "1"),
-            ("Index", "0"),
         ]);
         let mut monitor = UsageMonitorMeasure::default();
         let output = monitor.update(&context(&opts, &vars, &backend));
@@ -5606,8 +5603,7 @@ mod tests {
             ("Alias", "CUSTOM"),
             ("Category", "Process"),
             ("Counter", "Handle Count"),
-            ("Whitelist", &sample.name),
-            ("Index", "0"),
+            ("Name", &pid_value),
         ]);
         let output = monitor.update(&context(&opts, &vars, &backend));
         assert!(output.value.number > 0.0);
@@ -5616,8 +5612,7 @@ mod tests {
             ("Alias", "CUSTOM"),
             ("Category", "Process"),
             ("Counter", "Thread Count"),
-            ("Whitelist", &sample.name),
-            ("Index", "0"),
+            ("Name", &pid_value),
         ]);
         let output = monitor.update(&context(&opts, &vars, &backend));
         assert!(output.value.number > 0.0);
