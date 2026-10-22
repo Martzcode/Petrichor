@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"
+raw-window-handle = "0.6"
 serde.workspace = true
 serde_json.workspace = true
 petrichor-core.workspace = true

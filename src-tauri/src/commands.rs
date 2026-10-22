@@ -177,6 +177,27 @@ fn window_flags(path: &Path) -> WindowFlags {
         .unwrap_or(defaults)
 }
 
+fn window_handle(
+    app: &tauri::AppHandle,
+    windows: &crate::windows::SkinWindows,
+    path: &Path,
+) -> u64 {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use tauri::Manager;
+    let Some(label) = windows.find_by_path(path) else {
+        return 0;
+    };
+    let Some(window) = app.get_webview_window(&label) else {
+        return 0;
+    };
+    match window.window_handle().map(|handle| handle.as_raw()) {
+        Ok(RawWindowHandle::Xlib(handle)) => handle.window,
+        Ok(RawWindowHandle::Xcb(handle)) => u64::from(handle.window.get()),
+        Ok(RawWindowHandle::Win32(handle)) => handle.hwnd.get() as u64,
+        _ => 0,
+    }
+}
+
 #[tauri::command]
 pub fn read_measures(
     app: tauri::AppHandle,
@@ -184,7 +205,8 @@ pub fn read_measures(
     store: tauri::State<'_, MeasureStore>,
     path: String,
 ) -> MeasureSnapshot {
-    let Some(report) = store.update(Path::new(&path)) else {
+    let handle = window_handle(&app, &windows, Path::new(&path));
+    let Some(report) = store.update(Path::new(&path), handle) else {
         return MeasureSnapshot {
             strings: BTreeMap::new(),
             values: BTreeMap::new(),
@@ -260,8 +282,11 @@ impl MeasureStore {
         Some(action(engine))
     }
 
-    fn update(&self, path: &Path) -> Option<UpdateReport> {
-        self.with_engine(path, |engine| engine.tick(&backend()))
+    fn update(&self, path: &Path, window_handle: u64) -> Option<UpdateReport> {
+        self.with_engine(path, |engine| {
+            engine.set_window_handle(window_handle);
+            engine.tick(&backend())
+        })
     }
 
     pub fn variables(&self, path: &Path) -> Option<petrichor_core::Variables> {

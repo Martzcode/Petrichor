@@ -138,6 +138,55 @@ pub struct WifiInfo {
     pub networks: Vec<WifiNetwork>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MediaPlayerInfo {
+    pub bus_name: String,
+    pub identity: String,
+    pub desktop_entry: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NowPlayingInfo {
+    pub bus_name: String,
+    pub identity: String,
+    pub status: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub art_url: String,
+    pub file: String,
+    pub lyrics: String,
+    pub genre: String,
+    pub track_id: String,
+    pub duration_secs: f64,
+    pub position_secs: f64,
+    pub rating: f64,
+    pub track_number: i64,
+    pub year: i64,
+    pub volume: f64,
+    pub shuffle: bool,
+    pub repeat: String,
+}
+
+impl NowPlayingInfo {
+    pub fn state(&self) -> i32 {
+        match self.status.as_str() {
+            "Playing" => 1,
+            "Paused" => 2,
+            _ => 0,
+        }
+    }
+
+    pub fn progress(&self) -> f64 {
+        if self.duration_secs <= 0.0 {
+            0.0
+        } else {
+            (self.position_secs / self.duration_secs * 100.0).clamp(0.0, 100.0)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SysInfoValue {
     pub number: f64,
@@ -208,6 +257,22 @@ pub trait SystemBackend: Send + Sync {
 
     fn media_key(&self, _command: &str) -> bool {
         false
+    }
+
+    fn media_players(&self) -> Vec<MediaPlayerInfo> {
+        Vec::new()
+    }
+
+    fn now_playing(&self, _player: &str) -> Option<NowPlayingInfo> {
+        None
+    }
+
+    fn media_control(&self, _player: &str, _command: &str) -> bool {
+        false
+    }
+
+    fn media_cover(&self, _file: &str, _art_url: &str) -> Option<String> {
+        None
     }
 
     fn registry_value(&self, _path: &str) -> Option<String> {
@@ -333,6 +398,22 @@ impl SystemBackend for LinuxBackend {
 
     fn media_key(&self, command: &str) -> bool {
         media_key(command)
+    }
+
+    fn media_players(&self) -> Vec<MediaPlayerInfo> {
+        mpris_media_players()
+    }
+
+    fn now_playing(&self, player: &str) -> Option<NowPlayingInfo> {
+        mpris_now_playing(player)
+    }
+
+    fn media_control(&self, player: &str, command: &str) -> bool {
+        mpris_control(player, command)
+    }
+
+    fn media_cover(&self, file: &str, art_url: &str) -> Option<String> {
+        media_cover(file, art_url)
     }
 
     fn registry_value(&self, path: &str) -> Option<String> {
@@ -1863,6 +1944,497 @@ fn media_key(command: &str) -> bool {
     }
 }
 
+const MPRIS_PATH: &str = "/org/mpris/MediaPlayer2";
+const MPRIS_ROOT_IFACE: &str = "org.mpris.MediaPlayer2";
+const MPRIS_PLAYER_IFACE: &str = "org.mpris.MediaPlayer2.Player";
+
+fn mpris_media_players() -> Vec<MediaPlayerInfo> {
+    let Ok(connection) = zbus::blocking::Connection::session() else {
+        return Vec::new();
+    };
+    mpris_players(&connection)
+        .into_iter()
+        .map(|bus_name| {
+            let identity: String = dbus_property(
+                &connection,
+                &bus_name,
+                MPRIS_PATH,
+                MPRIS_ROOT_IFACE,
+                "Identity",
+            )
+            .unwrap_or_else(|| bus_suffix(&bus_name));
+            let desktop_entry: String = dbus_property(
+                &connection,
+                &bus_name,
+                MPRIS_PATH,
+                MPRIS_ROOT_IFACE,
+                "DesktopEntry",
+            )
+            .unwrap_or_default();
+            let status: String = dbus_property(
+                &connection,
+                &bus_name,
+                MPRIS_PATH,
+                MPRIS_PLAYER_IFACE,
+                "PlaybackStatus",
+            )
+            .unwrap_or_else(|| "Stopped".to_string());
+            MediaPlayerInfo {
+                bus_name,
+                identity,
+                desktop_entry,
+                status,
+            }
+        })
+        .collect()
+}
+
+fn bus_suffix(bus_name: &str) -> String {
+    bus_name
+        .strip_prefix("org.mpris.MediaPlayer2.")
+        .unwrap_or(bus_name)
+        .to_string()
+}
+
+fn mpris_match(requested: &str, player: &MediaPlayerInfo) -> bool {
+    let wanted = requested.trim().to_ascii_lowercase();
+    if wanted.is_empty()
+        || matches!(
+            wanted.as_str(),
+            "best" | "default" | "wlm" | "winamp" | "wmp" | "itunes" | "mediamonkey"
+        )
+    {
+        return false;
+    }
+    let bus = player.bus_name.to_ascii_lowercase();
+    bus.ends_with(&format!(".{wanted}"))
+        || player.identity.eq_ignore_ascii_case(requested)
+        || player.desktop_entry.eq_ignore_ascii_case(requested)
+        || bus_suffix(&player.bus_name).eq_ignore_ascii_case(requested)
+}
+
+fn mpris_select(players: &[MediaPlayerInfo], requested: &str) -> Option<MediaPlayerInfo> {
+    if let Some(player) = players.iter().find(|player| mpris_match(requested, player)) {
+        return Some(player.clone());
+    }
+    players
+        .iter()
+        .find(|player| player.status == "Playing")
+        .or_else(|| players.iter().find(|player| player.status == "Paused"))
+        .or_else(|| players.first())
+        .cloned()
+}
+
+fn mpris_now_playing(requested: &str) -> Option<NowPlayingInfo> {
+    let connection = zbus::blocking::Connection::session().ok()?;
+    let players = mpris_media_players();
+    let player = mpris_select(&players, requested)?;
+    let bus_name = player.bus_name.clone();
+    let metadata: std::collections::HashMap<String, zbus::zvariant::OwnedValue> = dbus_property(
+        &connection,
+        &bus_name,
+        MPRIS_PATH,
+        MPRIS_PLAYER_IFACE,
+        "Metadata",
+    )
+    .unwrap_or_default();
+    let status: String = dbus_property(
+        &connection,
+        &bus_name,
+        MPRIS_PATH,
+        MPRIS_PLAYER_IFACE,
+        "PlaybackStatus",
+    )
+    .unwrap_or_else(|| "Stopped".to_string());
+    let position: i64 = dbus_property(
+        &connection,
+        &bus_name,
+        MPRIS_PATH,
+        MPRIS_PLAYER_IFACE,
+        "Position",
+    )
+    .unwrap_or(0);
+    let volume: f64 = dbus_property(
+        &connection,
+        &bus_name,
+        MPRIS_PATH,
+        MPRIS_PLAYER_IFACE,
+        "Volume",
+    )
+    .unwrap_or(0.0);
+    let shuffle: bool = dbus_property(
+        &connection,
+        &bus_name,
+        MPRIS_PATH,
+        MPRIS_PLAYER_IFACE,
+        "Shuffle",
+    )
+    .unwrap_or(false);
+    let repeat: String = dbus_property(
+        &connection,
+        &bus_name,
+        MPRIS_PATH,
+        MPRIS_PLAYER_IFACE,
+        "LoopStatus",
+    )
+    .unwrap_or_else(|| "None".to_string());
+
+    Some(NowPlayingInfo {
+        bus_name,
+        identity: player.identity,
+        status,
+        title: metadata_string(&metadata, "xesam:title"),
+        artist: metadata_list(&metadata, "xesam:artist").join(", "),
+        album: metadata_string(&metadata, "xesam:album"),
+        art_url: metadata_string(&metadata, "mpris:artUrl"),
+        file: metadata_string(&metadata, "xesam:url"),
+        lyrics: metadata_string(&metadata, "xesam:lyrics"),
+        genre: metadata_list(&metadata, "xesam:genre").join(", "),
+        track_id: metadata_string(&metadata, "mpris:trackid"),
+        duration_secs: metadata_number(&metadata, "mpris:length") / 1_000_000.0,
+        position_secs: position as f64 / 1_000_000.0,
+        rating: metadata_number(&metadata, "xesam:rating").clamp(0.0, 5.0),
+        track_number: metadata_number(&metadata, "xesam:trackNumber") as i64,
+        year: metadata_year(&metadata),
+        volume: (volume * 100.0).clamp(0.0, 100.0),
+        shuffle,
+        repeat: repeat.to_ascii_lowercase(),
+    })
+}
+
+fn metadata_string(
+    metadata: &std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+    key: &str,
+) -> String {
+    metadata
+        .get(key)
+        .and_then(|value| String::try_from(value.try_clone().ok()?).ok())
+        .unwrap_or_default()
+}
+
+fn metadata_list(
+    metadata: &std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+    key: &str,
+) -> Vec<String> {
+    metadata
+        .get(key)
+        .and_then(|value| Vec::<String>::try_from(value.try_clone().ok()?).ok())
+        .unwrap_or_default()
+}
+
+fn metadata_number(
+    metadata: &std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+    key: &str,
+) -> f64 {
+    let Some(value) = metadata.get(key).cloned() else {
+        return 0.0;
+    };
+    if let Ok(number) = f64::try_from(value.clone()) {
+        return number;
+    }
+    if let Ok(number) = i64::try_from(value.clone()) {
+        return number as f64;
+    }
+    if let Ok(number) = u64::try_from(value) {
+        return number as f64;
+    }
+    0.0
+}
+
+fn metadata_year(metadata: &std::collections::HashMap<String, zbus::zvariant::OwnedValue>) -> i64 {
+    let created = metadata_string(metadata, "xesam:contentCreated");
+    created
+        .get(..4)
+        .and_then(|year| year.parse().ok())
+        .unwrap_or_else(|| {
+            metadata_number(metadata, "xesam:year").clamp(0.0, i64::MAX as f64) as i64
+        })
+}
+
+fn mpris_control(requested: &str, command: &str) -> bool {
+    let Ok(connection) = zbus::blocking::Connection::session() else {
+        return false;
+    };
+    let players = mpris_media_players();
+    let player = mpris_select(&players, requested);
+    let (action, args) = command
+        .trim()
+        .split_once(' ')
+        .map(|(action, args)| (action, args.trim()))
+        .unwrap_or((command.trim(), ""));
+    let action = action.to_ascii_lowercase();
+
+    if action == "openplayer" {
+        return open_media_player(requested, player.as_ref());
+    }
+    if action == "toggleplayer" {
+        if let Some(player) = &player {
+            return mpris_quit(&connection, &player.bus_name);
+        }
+        return open_media_player(requested, None);
+    }
+    let Some(player) = player else {
+        return false;
+    };
+    if action == "closeplayer" {
+        return mpris_quit(&connection, &player.bus_name);
+    }
+
+    let method = match action.as_str() {
+        "play" => "Play",
+        "pause" => "Pause",
+        "playpause" => "PlayPause",
+        "next" => "Next",
+        "previous" => "Previous",
+        "stop" => "Stop",
+        _ => "",
+    };
+    if !method.is_empty() {
+        return connection
+            .call_method(
+                Some(player.bus_name.as_str()),
+                MPRIS_PATH,
+                Some(MPRIS_PLAYER_IFACE),
+                method,
+                &(),
+            )
+            .is_ok();
+    }
+
+    let info = mpris_now_playing(requested);
+    match action.as_str() {
+        "setposition" => {
+            let Some(info) = info else {
+                return false;
+            };
+            let value = parse_relative(args, info.progress());
+            let position = (value.clamp(0.0, 100.0) / 100.0) * info.duration_secs;
+            let track = zbus::zvariant::ObjectPath::try_from(info.track_id.as_str())
+                .ok()
+                .map(|path| path.to_owned())
+                .unwrap_or_else(|| {
+                    zbus::zvariant::ObjectPath::try_from(
+                        "/org/mpris/MediaPlayer2/TrackList/NoTrack",
+                    )
+                    .expect("chemin de piste MPRIS valide")
+                    .to_owned()
+                });
+            connection
+                .call_method(
+                    Some(player.bus_name.as_str()),
+                    MPRIS_PATH,
+                    Some(MPRIS_PLAYER_IFACE),
+                    "SetPosition",
+                    &(track, (position * 1_000_000.0) as i64),
+                )
+                .is_ok()
+        }
+        "setvolume" => {
+            let Some(info) = info else {
+                return false;
+            };
+            let volume = parse_relative(args, info.volume).clamp(0.0, 100.0);
+            connection
+                .call_method(
+                    Some(player.bus_name.as_str()),
+                    MPRIS_PATH,
+                    Some(MPRIS_PLAYER_IFACE),
+                    "SetVolume",
+                    &(volume / 100.0),
+                )
+                .is_ok()
+        }
+        "setshuffle" => {
+            let Some(info) = info else {
+                return false;
+            };
+            let state = match args.trim() {
+                "-1" => !info.shuffle,
+                value => value != "0",
+            };
+            connection
+                .call_method(
+                    Some(player.bus_name.as_str()),
+                    MPRIS_PATH,
+                    Some(MPRIS_PLAYER_IFACE),
+                    "SetShuffle",
+                    &(state,),
+                )
+                .is_ok()
+        }
+        "setrepeat" => {
+            let Some(info) = info else {
+                return false;
+            };
+            let state = match args.trim() {
+                "-1" => {
+                    if info.repeat == "none" {
+                        "track"
+                    } else {
+                        "none"
+                    }
+                }
+                "0" => "none",
+                "1" => "track",
+                "2" => "playlist",
+                _ => return false,
+            };
+            connection
+                .call_method(
+                    Some(player.bus_name.as_str()),
+                    MPRIS_PATH,
+                    Some(MPRIS_PLAYER_IFACE),
+                    "SetLoopStatus",
+                    &(state,),
+                )
+                .is_ok()
+        }
+        "setrating" => {
+            let map = std::collections::HashMap::from([(
+                "xesam:rating",
+                zbus::zvariant::Value::from(args.trim().parse::<f64>().unwrap_or(0.0)),
+            )]);
+            connection
+                .call_method(
+                    Some(player.bus_name.as_str()),
+                    MPRIS_PATH,
+                    Some("org.freedesktop.DBus.Properties"),
+                    "Set",
+                    &(MPRIS_PLAYER_IFACE, "Metadata", map),
+                )
+                .is_ok()
+        }
+        _ => false,
+    }
+}
+
+fn parse_relative(args: &str, current: f64) -> f64 {
+    let args = args.trim();
+    if let Some(relative) = args.strip_prefix(['+', '-']) {
+        let sign = if args.starts_with('-') { -1.0 } else { 1.0 };
+        return current + sign * relative.trim().parse::<f64>().unwrap_or(0.0);
+    }
+    args.parse().unwrap_or(current)
+}
+
+fn mpris_quit(connection: &zbus::blocking::Connection, bus_name: &str) -> bool {
+    connection
+        .call_method(
+            Some(bus_name),
+            MPRIS_PATH,
+            Some(MPRIS_ROOT_IFACE),
+            "Quit",
+            &(),
+        )
+        .is_ok()
+}
+
+fn open_media_player(requested: &str, player: Option<&MediaPlayerInfo>) -> bool {
+    if player.is_some() {
+        return true;
+    }
+    let desktop = if requested.trim().is_empty() || requested.eq_ignore_ascii_case("best") {
+        String::new()
+    } else {
+        requested.trim().to_ascii_lowercase()
+    };
+    if !desktop.is_empty() {
+        if std::process::Command::new("gtk-launch")
+            .arg(&desktop)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if std::process::Command::new("gio")
+            .args(["launch", &desktop])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn media_cover(file: &str, art_url: &str) -> Option<String> {
+    let art_url = art_url.trim();
+    if !art_url.is_empty() {
+        if let Some(path) = art_url.strip_prefix("file://") {
+            let path = percent_decode(path);
+            if std::path::Path::new(&path).is_file() {
+                return Some(path);
+            }
+        } else if art_url.starts_with('/') {
+            if std::path::Path::new(art_url).is_file() {
+                return Some(art_url.to_string());
+            }
+        } else {
+            return Some(art_url.to_string());
+        }
+    }
+
+    let file = file.trim().strip_prefix("file://").unwrap_or(file.trim());
+    if file.is_empty() {
+        return None;
+    }
+    embedded_cover(file)
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&value[index + 1..index + 3], 16) {
+                output.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&output).to_string()
+}
+
+fn embedded_cover(file: &str) -> Option<String> {
+    use lofty::file::TaggedFileExt;
+    use lofty::picture::PictureType;
+    use lofty::probe::Probe;
+
+    let tagged = Probe::open(file).ok()?.read().ok()?;
+    let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
+    let picture = tag
+        .pictures()
+        .iter()
+        .find(|picture| picture.pic_type() == PictureType::CoverFront)
+        .or_else(|| tag.pictures().first())?;
+    let extension = picture
+        .mime_type()
+        .and_then(|mime| mime.as_str().split('/').nth(1))
+        .unwrap_or("jpg")
+        .replace("jpeg", "jpg");
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .map(|path| path.join("petrichor").join("covers"))?;
+    std::fs::create_dir_all(&cache).ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::{Hash, Hasher};
+    file.hash(&mut hasher);
+    let path = cache.join(format!("{:016x}.{extension}", hasher.finish()));
+    std::fs::write(&path, picture.data()).ok()?;
+    Some(path.to_string_lossy().to_string())
+}
+
 fn mpris_action(method: &str) -> bool {
     let Ok(connection) = zbus::blocking::Connection::session() else {
         return false;
@@ -2106,6 +2678,49 @@ mod tests {
         assert_eq!(wake, 1_792_570_100.5);
         assert_eq!(unix_to_filetime(0.0), 0.0);
         assert_eq!(unix_to_filetime(1.0), 11_644_473_601.0);
+    }
+
+    #[test]
+    fn selects_mpris_player_and_formats_state() {
+        let players = vec![
+            MediaPlayerInfo {
+                bus_name: "org.mpris.MediaPlayer2.vlc".to_string(),
+                identity: "VLC".to_string(),
+                desktop_entry: "vlc".to_string(),
+                status: "Paused".to_string(),
+            },
+            MediaPlayerInfo {
+                bus_name: "org.mpris.MediaPlayer2.spotify".to_string(),
+                identity: "Spotify".to_string(),
+                desktop_entry: "spotify".to_string(),
+                status: "Playing".to_string(),
+            },
+        ];
+        assert_eq!(
+            mpris_select(&players, "Spotify")
+                .expect("lecteur Spotify")
+                .bus_name,
+            "org.mpris.MediaPlayer2.spotify"
+        );
+        assert_eq!(
+            mpris_select(&players, "WLM")
+                .expect("lecteur BEST")
+                .bus_name,
+            "org.mpris.MediaPlayer2.spotify"
+        );
+        let info = NowPlayingInfo {
+            status: "Paused".to_string(),
+            duration_secs: 200.0,
+            position_secs: 50.0,
+            ..NowPlayingInfo::default()
+        };
+        assert_eq!(info.state(), 2);
+        assert_eq!(info.progress(), 25.0);
+    }
+
+    #[test]
+    fn decodes_cover_uri() {
+        assert_eq!(percent_decode("A%20B%2Fc"), "A B/c");
     }
 
     #[test]

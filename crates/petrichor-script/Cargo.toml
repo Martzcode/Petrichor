@@ -7,6 +7,8 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-petrichor-core.workspace = true
-serde.workspace = true
+mlua = { version = "0.10", features = ["lua51", "vendored", "send"] }
 thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

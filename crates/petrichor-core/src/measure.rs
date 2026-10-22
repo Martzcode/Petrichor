@@ -7,7 +7,8 @@ use chrono::{DateTime, Local};
 use petrichor_sys::{CpuTimes, NetSample, SystemBackend};
 
 use crate::formula::{self, EvalContext};
-use crate::model::{Measure, Options, Skin};
+use crate::model::{Measure, Meter, Options, Skin};
+use crate::plugins::{RuntimeContext, RuntimeSlot};
 use crate::readers::{read_bool, read_f64, read_u32};
 use crate::reference::{resolve_in_text, MeasureSource, MeasureValue};
 use crate::variables::Variables;
@@ -28,6 +29,7 @@ pub struct MeasureEngine {
     stats: BTreeMap<String, f64>,
     stats_path: Option<PathBuf>,
     stats_dirty: bool,
+    window_handle: u64,
 }
 
 #[derive(Debug, Default)]
@@ -84,6 +86,13 @@ struct MeasureState {
     web_shared: Arc<Mutex<WebFetchState>>,
     web_last_update: Option<u64>,
     web_loaded: bool,
+    now_track: Option<String>,
+    now_players: Arc<Mutex<BTreeMap<String, String>>>,
+    skin_name: String,
+    skin_path: PathBuf,
+    meters: Arc<Vec<Meter>>,
+    sections: Arc<BTreeMap<String, BTreeMap<String, String>>>,
+    runtime: Option<RuntimeSlot>,
     pending_actions: Vec<String>,
 }
 
@@ -94,11 +103,19 @@ impl MeasureEngine {
             variables.set(name, value);
         }
 
+        let now_players = Arc::new(Mutex::new(BTreeMap::new()));
+        let sections = Arc::new(skin.sections.clone());
         let mut states: Vec<MeasureState> = skin
             .measures
             .iter()
             .map(|measure| {
-                MeasureState::new(measure, skin.settings.default_update_divider, &skin.root)
+                MeasureState::new(
+                    measure,
+                    skin.settings.default_update_divider,
+                    skin,
+                    sections.clone(),
+                    now_players.clone(),
+                )
             })
             .collect();
         let stats_path = if cfg!(test) { None } else { stats_path(skin) };
@@ -122,6 +139,7 @@ impl MeasureEngine {
             stats,
             stats_path,
             stats_dirty: false,
+            window_handle: 0,
         }
     }
 
@@ -142,13 +160,48 @@ impl MeasureEngine {
     }
 
     pub fn command_measure(&mut self, name: &str, command: &str) -> bool {
-        let Some(state) = self
+        let Some(index) = self
             .states
-            .iter_mut()
-            .find(|state| state.name.eq_ignore_ascii_case(name))
+            .iter()
+            .position(|state| state.name.eq_ignore_ascii_case(name))
         else {
             return false;
         };
+        let kind = self.states[index].kind.clone();
+        if kind == "NOWPLAYING" {
+            let request = now_player_request(
+                &self.states[index],
+                &self.variables,
+                &self.states[index].now_players,
+            );
+            return petrichor_sys::backend().media_control(&request, command);
+        }
+        if kind == "MEDIAKEY" {
+            return petrichor_sys::backend().media_key(command.trim());
+        }
+        if kind == "PLUGIN" || kind == "SCRIPT" {
+            let state = &self.states[index];
+            let Some(runtime) = state.runtime.clone() else {
+                return false;
+            };
+            let backend = petrichor_sys::backend();
+            let context = RuntimeContext {
+                skin_name: &state.skin_name,
+                skin_root: &state.root,
+                skin_path: &state.skin_path,
+                measure_name: &state.name,
+                options: &state.options,
+                variables: &self.variables,
+                backend: &backend,
+                values: &BTreeMap::new(),
+                meters: &state.meters,
+                sections: &state.sections,
+                skin_window_handle: self.window_handle,
+                counter: self.update_number as f64,
+            };
+            return runtime.command(command, &context);
+        }
+        let state = &mut self.states[index];
         match (
             state.kind.as_str(),
             command.trim().to_ascii_lowercase().as_str(),
@@ -179,6 +232,10 @@ impl MeasureEngine {
         self.variables.set(name, value);
     }
 
+    pub fn set_window_handle(&mut self, handle: u64) {
+        self.window_handle = handle;
+    }
+
     pub fn tick(&mut self, backend: &dyn SystemBackend) -> UpdateReport {
         self.update(backend, Local::now())
     }
@@ -191,6 +248,16 @@ impl MeasureEngine {
             .states
             .iter()
             .map(|state| (state.key.clone(), state.last_value.clone()))
+            .collect();
+        let runtimes: BTreeMap<String, RuntimeSlot> = self
+            .states
+            .iter()
+            .filter_map(|state| {
+                state
+                    .runtime
+                    .clone()
+                    .map(|runtime| (state.key.clone(), runtime))
+            })
             .collect();
         let mut actions = Vec::new();
 
@@ -215,9 +282,28 @@ impl MeasureEngine {
             }
 
             let previous = self.states[index].last_value.clone();
+            let measure_name = self.states[index].name.clone();
+            let options = self.states[index].options.clone();
+            let runtime = self.states[index].runtime.clone();
+            let skin_name = self.states[index].skin_name.clone();
+            let skin_path = self.states[index].skin_path.clone();
+            let skin_root = self.states[index].root.clone();
+            let meters = self.states[index].meters.clone();
+            let sections = self.states[index].sections.clone();
             let context = Context {
                 values: &values,
                 variables: &self.variables,
+                options: &options,
+                runtime: runtime.as_ref(),
+                runtimes: &runtimes,
+                backend,
+                skin_name: &skin_name,
+                skin_root: &skin_root,
+                skin_path: &skin_path,
+                measure_name: &measure_name,
+                meters: &meters,
+                sections: &sections,
+                skin_window_handle: self.window_handle,
                 counter: self.update_number as f64,
                 rng: &self.rng,
             };
@@ -241,6 +327,17 @@ impl MeasureEngine {
             let if_context = Context {
                 values: &if_values,
                 variables: &self.variables,
+                options: &options,
+                runtime: runtime.as_ref(),
+                runtimes: &runtimes,
+                backend,
+                skin_name: &skin_name,
+                skin_root: &skin_root,
+                skin_path: &skin_path,
+                measure_name: &measure_name,
+                meters: &meters,
+                sections: &sections,
+                skin_window_handle: self.window_handle,
                 counter: self.update_number as f64,
                 rng: &self.rng,
             };
@@ -313,11 +410,29 @@ impl MeasureEngine {
 }
 
 impl MeasureState {
-    fn new(measure: &Measure, default_divider: u32, root: &std::path::Path) -> Self {
+    fn new(
+        measure: &Measure,
+        default_divider: u32,
+        skin: &Skin,
+        sections: Arc<BTreeMap<String, BTreeMap<String, String>>>,
+        now_players: Arc<Mutex<BTreeMap<String, String>>>,
+    ) -> Self {
+        let kind = measure.kind.trim().to_ascii_uppercase();
+        let runtime = match kind.as_str() {
+            "PLUGIN" => crate::plugins::create_plugin_measure(
+                measure,
+                &skin.name,
+                &skin.root,
+                &skin.ini_path,
+            ),
+            "SCRIPT" => crate::plugins::create_script_measure(measure, &skin.root),
+            _ => None,
+        }
+        .map(RuntimeSlot::new);
         MeasureState {
             name: measure.name.clone(),
             key: measure.name.to_ascii_lowercase(),
-            kind: measure.kind.trim().to_ascii_uppercase(),
+            kind,
             options: measure.options.clone(),
             update_divider: measure
                 .options
@@ -358,12 +473,19 @@ impl MeasureState {
             net_last_time_ms: None,
             auto_max_samples: Vec::new(),
             if_states: BTreeMap::new(),
-            root: root.to_path_buf(),
+            root: skin.root.clone(),
             web_content: String::new(),
             web_path: None,
             web_shared: Arc::new(Mutex::new(WebFetchState::default())),
             web_last_update: None,
             web_loaded: false,
+            now_track: None,
+            now_players,
+            skin_name: skin.name.clone(),
+            skin_path: skin.ini_path.clone(),
+            meters: Arc::new(skin.meters.clone()),
+            sections,
+            runtime,
             pending_actions: Vec::new(),
         }
     }
@@ -392,7 +514,9 @@ fn compute(
         "WIFISTATUS" => wifi_value(state, context, backend),
         "WEBPARSER" => webparser_value(state, context),
         "REGISTRY" => registry_measure_value(state, context, backend),
-        "MEDIAKEY" | "PLUGIN" | "SCRIPT" | "NOWPLAYING" => empty_value(),
+        "NOWPLAYING" => now_playing_value(state, context, backend),
+        "PLUGIN" | "SCRIPT" => runtime_value(state, context, backend),
+        "MEDIAKEY" => empty_value(),
         "STRING" => string_value(state, context),
         "CALC" => calc_value(state, context),
         "LOOP" => loop_value(state),
@@ -1693,6 +1817,17 @@ fn apply_bounds(state: &MeasureState, value: &mut MeasureValue) {
 struct Context<'a> {
     values: &'a BTreeMap<String, MeasureValue>,
     variables: &'a Variables,
+    options: &'a Options,
+    runtime: Option<&'a RuntimeSlot>,
+    runtimes: &'a BTreeMap<String, RuntimeSlot>,
+    backend: &'a dyn SystemBackend,
+    skin_name: &'a str,
+    skin_root: &'a std::path::Path,
+    skin_path: &'a std::path::Path,
+    measure_name: &'a str,
+    meters: &'a [Meter],
+    sections: &'a BTreeMap<String, BTreeMap<String, String>>,
+    skin_window_handle: u64,
     counter: f64,
     rng: &'a Cell<u64>,
 }
@@ -1721,6 +1856,30 @@ impl MeasureSource for Context<'_> {
             return Some(MeasureValue::number(self.counter));
         }
         self.values.get(&name.to_ascii_lowercase()).cloned()
+    }
+
+    fn call(&self, measure: &str, function: &str) -> Option<String> {
+        let runtime = self
+            .runtimes
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(measure))
+            .map(|(_, runtime)| runtime)
+            .or(self.runtime)?;
+        let context = RuntimeContext {
+            skin_name: self.skin_name,
+            skin_root: self.skin_root,
+            skin_path: self.skin_path,
+            measure_name: self.measure_name,
+            options: self.options,
+            variables: self.variables,
+            backend: self.backend,
+            values: self.values,
+            meters: self.meters,
+            sections: self.sections,
+            skin_window_handle: self.skin_window_handle,
+            counter: self.counter,
+        };
+        runtime.call(function, &context)
     }
 }
 
@@ -1811,6 +1970,160 @@ fn parse_pairs(raw: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+fn runtime_value(
+    state: &mut MeasureState,
+    context: &Context<'_>,
+    backend: &dyn SystemBackend,
+) -> MeasureValue {
+    let Some(runtime) = state.runtime.clone() else {
+        return empty_value();
+    };
+    let runtime_context = RuntimeContext {
+        skin_name: &state.skin_name,
+        skin_root: &state.root,
+        skin_path: &state.skin_path,
+        measure_name: &state.name,
+        options: &state.options,
+        variables: context.variables,
+        backend,
+        values: context.values,
+        meters: &state.meters,
+        sections: &state.sections,
+        skin_window_handle: context.skin_window_handle,
+        counter: context.counter,
+    };
+    let output = runtime.update(&runtime_context);
+    state.pending_actions.extend(output.actions);
+    output.value
+}
+
+fn now_player_request(
+    state: &MeasureState,
+    variables: &Variables,
+    players: &Arc<Mutex<BTreeMap<String, String>>>,
+) -> String {
+    let raw = state.options.get("PlayerName").unwrap_or("WLM");
+    let expanded = variables.expand(raw);
+    let trimmed = expanded.trim();
+    let reference = trimmed
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    if trimmed.starts_with('[') {
+        return players
+            .lock()
+            .ok()
+            .and_then(|players| players.get(&reference.to_ascii_lowercase()).cloned())
+            .unwrap_or_else(|| "BEST".to_string());
+    }
+    reference.to_string()
+}
+
+fn now_playing_value(
+    state: &mut MeasureState,
+    context: &Context<'_>,
+    backend: &dyn SystemBackend,
+) -> MeasureValue {
+    let request = now_player_request(state, context.variables, &state.now_players);
+    let Some(info) = backend.now_playing(&request) else {
+        return MeasureValue {
+            number: 0.0,
+            string: Some(String::new()),
+            min: None,
+            max: None,
+        };
+    };
+
+    if let Ok(mut players) = state.now_players.lock() {
+        players.insert(state.key.clone(), info.bus_name.clone());
+    }
+
+    if state.now_track.as_deref() != Some(info.track_id.as_str()) {
+        state.now_track = Some(info.track_id.clone());
+        if let Some(action) = state.options.get("TrackChangeAction") {
+            state.pending_actions.push(context.variables.expand(action));
+        }
+    }
+
+    let player_type = state
+        .options
+        .get("PlayerType")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_uppercase();
+    let disable_leading_zero = state
+        .options
+        .get("DisableLeadingZero")
+        .map(|value| read_bool(value, false))
+        .unwrap_or(false);
+
+    let text_value = |text: String| MeasureValue {
+        number: text.parse().unwrap_or(0.0),
+        string: Some(text),
+        min: None,
+        max: None,
+    };
+    let number_value = |number: f64, min: Option<f64>, max: Option<f64>| MeasureValue {
+        number,
+        string: Some(format_display(number)),
+        min,
+        max,
+    };
+
+    match player_type.as_str() {
+        "ARTIST" => text_value(info.artist),
+        "TITLE" => text_value(info.title),
+        "ALBUM" => text_value(info.album),
+        "COVER" => text_value(
+            backend
+                .media_cover(&info.file, &info.art_url)
+                .unwrap_or_else(|| info.art_url.clone()),
+        ),
+        "DURATION" => text_value(format_media_time(info.duration_secs, disable_leading_zero)),
+        "POSITION" => text_value(format_media_time(info.position_secs, disable_leading_zero)),
+        "PROGRESS" => number_value(info.progress(), Some(0.0), Some(100.0)),
+        "RATING" => number_value(info.rating, Some(0.0), Some(5.0)),
+        "STATE" => number_value(f64::from(info.state()), Some(0.0), Some(2.0)),
+        "STATUS" => number_value(1.0, Some(0.0), Some(1.0)),
+        "VOLUME" => number_value(info.volume, Some(0.0), Some(100.0)),
+        "SHUFFLE" => number_value(if info.shuffle { 1.0 } else { 0.0 }, Some(0.0), Some(1.0)),
+        "REPEAT" => number_value(
+            match info.repeat.as_str() {
+                "track" => 1.0,
+                "playlist" => 2.0,
+                _ => 0.0,
+            },
+            Some(0.0),
+            Some(2.0),
+        ),
+        "LYRICS" => text_value(info.lyrics),
+        "FILE" => text_value(info.file),
+        "NUMBER" => number_value(info.track_number as f64, None, None),
+        "YEAR" => number_value(info.year as f64, None, None),
+        "GENRE" => text_value(info.genre),
+        _ => empty_value(),
+    }
+}
+
+fn format_media_time(seconds: f64, disable_leading_zero: bool) -> String {
+    let total = seconds.max(0.0) as u64;
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    let secs = total % 60;
+    if hours > 0 {
+        if disable_leading_zero {
+            format!("{hours}:{minutes:02}:{secs:02}")
+        } else {
+            format!("{hours:02}:{minutes:02}:{secs:02}")
+        }
+    } else if disable_leading_zero {
+        format!("{minutes}:{secs:02}")
+    } else {
+        format!("{minutes:02}:{secs:02}")
+    }
+}
+
 fn empty_value() -> MeasureValue {
     MeasureValue {
         number: 0.0,
@@ -1885,8 +2198,8 @@ mod tests {
     use super::*;
     use crate::model::{OptionEntry, SkinSettings};
     use petrichor_sys::{
-        CpuSnapshot, DiskSpaceInfo, MemoryInfo, NetSample, OsRelease, SysInfoValue, TrashInfo,
-        WifiInfo,
+        CpuSnapshot, DiskSpaceInfo, MemoryInfo, NetSample, NowPlayingInfo, OsRelease, SysInfoValue,
+        TrashInfo, WifiInfo,
     };
     use std::path::PathBuf;
 
@@ -1901,6 +2214,7 @@ mod tests {
         wifi: WifiInfo,
         sysinfo: Option<SysInfoValue>,
         registry: Option<String>,
+        media: Option<NowPlayingInfo>,
     }
 
     impl MockBackend {
@@ -1933,6 +2247,7 @@ mod tests {
                 wifi: WifiInfo::default(),
                 sysinfo: None,
                 registry: None,
+                media: None,
             }
         }
     }
@@ -1981,6 +2296,12 @@ mod tests {
         fn registry_value(&self, _path: &str) -> Option<String> {
             self.registry.clone()
         }
+        fn now_playing(&self, _player: &str) -> Option<NowPlayingInfo> {
+            self.media.clone()
+        }
+        fn media_cover(&self, _file: &str, art_url: &str) -> Option<String> {
+            (!art_url.is_empty()).then(|| art_url.to_string())
+        }
     }
 
     fn measure(kind: &str, name: &str, entries: &[(&str, &str)]) -> Measure {
@@ -2014,6 +2335,7 @@ mod tests {
             meters: Vec::new(),
             styles: Vec::new(),
             included_files: Vec::new(),
+            sections: BTreeMap::new(),
         }
     }
 
@@ -2072,6 +2394,51 @@ mod tests {
         assert_eq!(report.strings.get("Up").unwrap(), "1d 01:01:01");
         assert_eq!(report.strings.get("Up2").unwrap(), "01:01");
         assert_eq!(report.values.get("Up").unwrap().number, 90_061.0);
+    }
+
+    #[test]
+    fn script_measure_updates_and_calls_functions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Test.lua");
+        std::fs::write(
+            &path,
+            r#"
+            function Update()
+                SKIN:Bang('!SetVariable', 'FromLua', 'yes')
+                return 7
+            end
+            function GetStringValue()
+                return 'lua'
+            end
+            function Double(value)
+                return value * 2
+            end
+            "#,
+        )
+        .unwrap();
+        let mut skin = skin(vec![
+            measure(
+                "Script",
+                "ScriptMeasure",
+                &[("ScriptFile", path.to_str().unwrap())],
+            ),
+            measure(
+                "String",
+                "Message",
+                &[("Text", "[ScriptMeasure:Double(3)]")],
+            ),
+        ]);
+        skin.root = dir.path().to_path_buf();
+        let mut engine = MeasureEngine::new(&skin);
+        let report = update_once(&mut engine);
+        let value = report.values.get("ScriptMeasure").unwrap();
+        assert_eq!(value.number, 7.0);
+        assert_eq!(value.string.as_deref(), Some("lua"));
+        assert_eq!(report.strings.get("Message").unwrap(), "6");
+        assert!(report
+            .actions
+            .iter()
+            .any(|action| action.contains("FromLua")));
     }
 
     #[test]
@@ -2780,6 +3147,71 @@ mod tests {
         });
         server.join().unwrap();
         assert_eq!(report.strings.get("Web").unwrap(), "Hello");
+    }
+
+    #[test]
+    fn nowplaying_reads_mpris_metadata_and_track_changes() {
+        let mut backend = MockBackend::new();
+        backend.media = Some(NowPlayingInfo {
+            bus_name: "org.mpris.MediaPlayer2.spotify".to_string(),
+            identity: "Spotify".to_string(),
+            status: "Playing".to_string(),
+            title: "Titre".to_string(),
+            artist: "Artiste".to_string(),
+            duration_secs: 65.0,
+            position_secs: 5.0,
+            track_id: "/track/1".to_string(),
+            ..NowPlayingInfo::default()
+        });
+        let mut engine = MeasureEngine::new(&skin(vec![
+            measure(
+                "NowPlaying",
+                "Parent",
+                &[
+                    ("PlayerName", "BEST"),
+                    ("PlayerType", "STATUS"),
+                    ("TrackChangeAction", "[!Update]"),
+                ],
+            ),
+            measure(
+                "NowPlaying",
+                "Title",
+                &[("PlayerName", "[Parent]"), ("PlayerType", "TITLE")],
+            ),
+            measure(
+                "NowPlaying",
+                "Duration",
+                &[("PlayerName", "[Parent]"), ("PlayerType", "DURATION")],
+            ),
+            measure(
+                "NowPlaying",
+                "Progress",
+                &[("PlayerName", "[Parent]"), ("PlayerType", "PROGRESS")],
+            ),
+        ]));
+        let report = engine.update(&backend, fixed_now());
+        assert_eq!(report.strings.get("Title").unwrap(), "Titre");
+        assert_eq!(report.strings.get("Duration").unwrap(), "01:05");
+        assert_eq!(
+            report.values.get("Progress").unwrap().number,
+            100.0 / 13.0 * 1.0
+        );
+        assert!(report.actions.iter().any(|action| action == "[!Update]"));
+
+        let second = engine.update(&backend, fixed_now());
+        assert!(!second.actions.iter().any(|action| action == "[!Update]"));
+    }
+
+    #[test]
+    fn nowplaying_handles_missing_player() {
+        let mut engine = MeasureEngine::new(&skin(vec![measure(
+            "NowPlaying",
+            "Title",
+            &[("PlayerName", "BEST"), ("PlayerType", "TITLE")],
+        )]));
+        let report = engine.update(&MockBackend::new(), fixed_now());
+        assert_eq!(report.strings.get("Title").unwrap(), "");
+        assert_eq!(report.values.get("Title").unwrap().number, 0.0);
     }
 
     #[test]

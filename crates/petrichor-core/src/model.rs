@@ -306,6 +306,7 @@ pub struct Skin {
     pub meters: Vec<Meter>,
     pub styles: Vec<StyleSection>,
     pub included_files: Vec<PathBuf>,
+    pub sections: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Skin {
@@ -422,12 +423,21 @@ fn build_skin_from_resolved(
     let mut measures = Vec::new();
     let mut meters = Vec::new();
     let mut styles = Vec::new();
+    let mut sections = BTreeMap::new();
 
     for section in &document.sections {
         if section.name.is_empty() {
             continue;
         }
         let lower = section.name.to_ascii_lowercase();
+        sections.insert(
+            section.name.clone(),
+            section
+                .entries
+                .iter()
+                .map(|entry| (entry.key.clone(), entry.value.clone()))
+                .collect(),
+        );
         if lower == "variables" || lower == "metadata" || lower == "petrichor" {
             continue;
         }
@@ -472,6 +482,7 @@ fn build_skin_from_resolved(
         meters,
         styles,
         included_files: files,
+        sections,
     };
 
     let mut diagnostics = include_diagnostics;
