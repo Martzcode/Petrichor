@@ -25,7 +25,20 @@ import {
   updateMeterValues,
 } from '../renderer/values';
 import { TextStyle } from '../renderer/inline';
-import { isTauri, PetrichorIpc, SkinCommand } from '../shared/ipc';
+import {
+  isTauri,
+  MouseActionState,
+  PetrichorIpc,
+  SkinCommand,
+} from '../shared/ipc';
+import {
+  buttonAction,
+  cursorName,
+  expandMouseVariables,
+  isActionSuppressed,
+  MouseStates,
+  normalizeAction,
+} from './mouse';
 
 @Component({
   selector: 'app-root',
@@ -39,6 +52,10 @@ export class SkinView implements AfterViewInit, OnDestroy {
     viewChild<ElementRef<HTMLCanvasElement>>('canvas');
   protected readonly error = signal<string | null>(null);
   protected readonly tooltip = signal<TooltipState | null>(null);
+  protected readonly selectionActive = signal(false);
+  protected readonly selectionSelected = signal(false);
+  protected readonly selectionColor = signal('#38bdf8');
+  protected readonly hoverHidden = signal(false);
 
   private label = '';
   private path = '';
@@ -58,6 +75,15 @@ export class SkinView implements AfterViewInit, OnDestroy {
   private pressPosition: { x: number; y: number } | null = null;
   private dragging = false;
   private lastSize: { width: number; height: number } | null = null;
+  private readonly mouseStates = new Map<
+    string,
+    Map<string, MouseActionState>
+  >();
+  private baseOpacity = 1;
+  private onHover = 0;
+  private mouseX = 0;
+  private mouseY = 0;
+  private fadeTimer: ReturnType<typeof setTimeout> | null = null;
 
   async ngAfterViewInit(): Promise<void> {
     try {
@@ -68,6 +94,7 @@ export class SkinView implements AfterViewInit, OnDestroy {
       );
       this.watchdog = setTimeout(() => void this.showWindow(), 3000);
       await this.run();
+      if (await this.ipc.selectionActive()) this.selectionActive.set(true);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       this.error.set(message);
@@ -83,6 +110,7 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.clearWatchdog();
+    this.clearFade();
     this.stopUpdates();
     this.unlistenCommand?.();
     this.unlistenCommand = null;
@@ -127,6 +155,12 @@ export class SkinView implements AfterViewInit, OnDestroy {
     this.path = info.path;
     this.model = result.model;
     this.draggable = result.flags.draggable;
+    this.onHover = Math.min(2, Math.max(0, result.flags.on_hover ?? 0));
+    this.hoverHidden.set(false);
+    this.clearFade();
+    this.baseOpacity =
+      Math.min(255, Math.max(0, result.flags.opacity ?? 255)) / 255;
+    this.setCanvasOpacity(this.baseOpacity);
 
     await this.loadFonts(result.model);
     this.images = await this.loadImages(result.model);
@@ -196,6 +230,32 @@ export class SkinView implements AfterViewInit, OnDestroy {
           this.draggable = command.value;
           this.updateCursor(this.hoveredBox);
           break;
+        case 'mouseActions':
+          this.updateMouseActions(
+            command.target,
+            command.actions,
+            command.state,
+          );
+          break;
+        case 'opacity':
+          this.baseOpacity = Math.min(255, Math.max(0, command.value)) / 255;
+          this.clearFade();
+          this.setCanvasOpacity(this.baseOpacity);
+          break;
+        case 'fade':
+          this.runFade(command.show, command.duration_ms);
+          break;
+        case 'selection':
+          this.selectionActive.set(command.active);
+          this.selectionSelected.set(command.selected);
+          this.selectionColor.set(command.color);
+          this.updateCursor(this.hoveredBox);
+          break;
+        case 'onHover':
+          this.onHover = Math.min(2, Math.max(0, command.value));
+          this.hoverHidden.set(false);
+          this.setCanvasOpacity(this.baseOpacity);
+          break;
       }
     } catch (cause) {
       await this.logError('commande', cause);
@@ -203,16 +263,26 @@ export class SkinView implements AfterViewInit, OnDestroy {
   }
 
   onMouseMove(event: MouseEvent): void {
+    this.setMousePosition(event);
     const box = this.boxAt(event);
     this.updateTooltip(box, event);
+    this.applyHover(event);
+    if (this.selectionActive()) {
+      this.hoveredBox = box;
+      this.updateCursor(box);
+      return;
+    }
     const name = box?.meter.name ?? null;
     const previous = this.hoveredBox?.meter.name ?? null;
 
     if (name !== previous) {
-      const leaving = this.hoveredBox?.meter.mouse_leave_action;
+      const leaving = this.actionFor(
+        this.hoveredBox?.meter,
+        'mouseleaveaction',
+      );
       if (leaving) void this.execute(leaving);
       this.hoveredBox = box;
-      const entering = box?.meter.mouse_over_action;
+      const entering = this.actionFor(box?.meter, 'mouseoveraction');
       if (entering) void this.execute(entering);
     }
 
@@ -220,7 +290,14 @@ export class SkinView implements AfterViewInit, OnDestroy {
   }
 
   onMouseLeave(): void {
-    const leaving = this.hoveredBox?.meter.mouse_leave_action;
+    this.restoreHover();
+    if (this.selectionActive()) {
+      this.hoveredBox = null;
+      this.tooltip.set(null);
+      this.updateCursor(null);
+      return;
+    }
+    const leaving = this.actionFor(this.hoveredBox?.meter, 'mouseleaveaction');
     if (leaving) void this.execute(leaving);
     this.hoveredBox = null;
     this.tooltip.set(null);
@@ -229,9 +306,24 @@ export class SkinView implements AfterViewInit, OnDestroy {
   }
 
   onMouseDown(event: MouseEvent): void {
+    this.setMousePosition(event);
+    if (this.selectionActive()) {
+      event.preventDefault();
+      if (event.button === 0) {
+        void this.startSelectionDrag(event.ctrlKey || event.shiftKey);
+      }
+      return;
+    }
+    const box = this.boxAt(event);
+    const down = this.actionFor(box?.meter, buttonAction(event.button, 'down'));
+    if (down) {
+      event.preventDefault();
+      void this.execute(down);
+    }
+
     if (event.button !== 0) return;
     this.pressPosition = { x: event.clientX, y: event.clientY };
-    this.pressedMeter = this.boxAt(event)?.meter.name ?? null;
+    this.pressedMeter = box?.meter.name ?? null;
     if (this.pressedMeter && this.model) this.render();
     if (!this.draggable) return;
     this.dragging = true;
@@ -240,34 +332,104 @@ export class SkinView implements AfterViewInit, OnDestroy {
   }
 
   onMouseUp(event: MouseEvent): void {
+    this.setMousePosition(event);
+    if (this.selectionActive()) {
+      if (event.button === 0 && this.dragging) {
+        this.dragging = false;
+        void this.ipc.setSkinDragging(this.label, false);
+      }
+      return;
+    }
     const press = this.pressPosition;
     const pressedMeter = this.pressedMeter;
-    this.pressPosition = null;
-    this.pressedMeter = null;
     const wasDragging = this.dragging;
-    this.dragging = false;
 
-    if (event.button !== 0) return;
-    if (wasDragging) {
-      void this.ipc.setSkinDragging(this.label, false);
-    }
-    const moved =
-      press !== null &&
-      Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4;
-    if (wasDragging && moved) {
-      void this.savePosition();
-      return;
+    if (event.button === 0) {
+      this.pressPosition = null;
+      this.pressedMeter = null;
+      this.dragging = false;
     }
 
     const box = this.boxAt(event);
-    const meter = box?.meter;
-    if (meter?.type === 'button' && meter.name === pressedMeter) {
-      const command = (meter as ButtonMeter).command;
-      if (command) void this.execute(command);
+    const moved =
+      press !== null &&
+      Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4;
+
+    if (event.button === 0) {
+      if (wasDragging) {
+        void this.ipc.setSkinDragging(this.label, false);
+      }
+      if (wasDragging && moved) {
+        void this.savePosition();
+        return;
+      }
+
+      const meter = box?.meter;
+      if (meter?.type === 'button' && meter.name === pressedMeter) {
+        const command = (meter as ButtonMeter).command;
+        if (command) void this.execute(command);
+      }
+      if (this.model) this.render();
     }
-    if (this.model) this.render();
-    const action = box?.meter.left_mouse_up_action;
-    if (action) void this.execute(action);
+
+    const up = this.actionFor(box?.meter, buttonAction(event.button, 'up'));
+    if (up) void this.execute(up);
+  }
+
+  onMouseDoubleClick(event: MouseEvent): void {
+    if (this.selectionActive()) return;
+    this.setMousePosition(event);
+    const action = this.actionFor(
+      this.boxAt(event)?.meter,
+      buttonAction(event.button, 'doubleclick'),
+    );
+    if (action) {
+      event.preventDefault();
+      void this.execute(action);
+    }
+  }
+
+  onMouseScroll(event: WheelEvent): void {
+    if (this.selectionActive()) return;
+    this.mouseX = event.clientX;
+    this.mouseY = event.clientY;
+    const key =
+      event.deltaY < 0
+        ? 'mousescrollupaction'
+        : event.deltaY > 0
+          ? 'mousescrolldownaction'
+          : event.deltaX < 0
+            ? 'mousescrollleftaction'
+            : event.deltaX > 0
+              ? 'mousescrollrightaction'
+              : null;
+    if (!key) return;
+    const action = this.actionFor(this.boxAt(event)?.meter, key);
+    if (!action) return;
+    event.preventDefault();
+    void this.execute(action);
+  }
+
+  onContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    if (this.selectionActive()) return;
+    const meter = this.boxAt(event)?.meter;
+    if (
+      this.actionFor(meter, 'rightmouseupaction') ||
+      this.actionFor(meter, 'rightmousedownaction') ||
+      this.actionFor(meter, 'rightmousedoubleclickaction')
+    ) {
+      return;
+    }
+    void this.openSkinMenu(event.clientX, event.clientY);
+  }
+
+  private async openSkinMenu(x?: number, y?: number): Promise<void> {
+    try {
+      await this.ipc.showSkinMenu(this.label, x, y);
+    } catch (cause) {
+      await this.logError('menu', cause);
+    }
   }
 
   private boxAt(event: MouseEvent): MeterBox | null {
@@ -355,21 +517,146 @@ export class SkinView implements AfterViewInit, OnDestroy {
     });
   }
 
+  private actionFor(
+    meter: RenderModel['meters'][number] | undefined,
+    action: string | null,
+  ): string | null {
+    if (!meter || !action) return null;
+    const key = normalizeAction(action);
+    const actions = meter.mouse_actions ?? {};
+    const value =
+      actions[key] ??
+      (key === 'leftmouseupaction' ? meter.left_mouse_up_action : null) ??
+      (key === 'mouseoveraction' ? meter.mouse_over_action : null) ??
+      (key === 'mouseleaveaction' ? meter.mouse_leave_action : null);
+    if (!value || this.isActionSuppressed(meter, key)) return null;
+    return value;
+  }
+
+  private isActionSuppressed(
+    meter: RenderModel['meters'][number],
+    action: string,
+  ): boolean {
+    return isActionSuppressed(meter, action, this.mouseStates);
+  }
+
+  private updateMouseActions(
+    target: string,
+    actions: string[],
+    state: MouseActionState,
+  ): void {
+    const key = target.trim().toLocaleLowerCase();
+    if (!key) return;
+    let states = this.mouseStates.get(key);
+    if (!states) {
+      states = new Map();
+      this.mouseStates.set(key, states);
+    }
+    for (const action of actions) {
+      const name = normalizeAction(action);
+      if (!name) continue;
+      const next =
+        state === 'toggle'
+          ? states.get(name) === 'disabled'
+            ? 'enabled'
+            : 'disabled'
+          : state;
+      if (next === 'enabled') {
+        states.delete(name);
+      } else {
+        states.set(name, next);
+      }
+    }
+    if (states.size === 0) this.mouseStates.delete(key);
+    this.updateCursor(this.hoveredBox);
+  }
+
   private updateCursor(box: MeterBox | null): void {
     const canvas = this.canvasRef()?.nativeElement;
     if (!canvas) return;
+    if (this.selectionActive()) {
+      canvas.style.cursor = 'pointer';
+      return;
+    }
 
     const meter = box?.meter;
     const hasAction =
+      (meter &&
+        Object.keys(meter.mouse_actions ?? {}).some(
+          (name) => !this.isActionSuppressed(meter, name),
+        )) ||
       meter?.left_mouse_up_action ||
       meter?.mouse_over_action ||
       meter?.mouse_leave_action ||
       (meter?.type === 'button' && meter.command);
-    canvas.style.cursor = hasAction
-      ? 'pointer'
-      : this.draggable
-        ? 'move'
-        : 'default';
+    const cursorEnabled = meter?.mouse_action_cursor !== false;
+    canvas.style.cursor =
+      hasAction && cursorEnabled
+        ? cursorName(meter?.mouse_action_cursor_name ?? null)
+        : this.draggable
+          ? 'move'
+          : 'default';
+  }
+
+  private setMousePosition(event: MouseEvent): void {
+    this.mouseX = event.clientX;
+    this.mouseY = event.clientY;
+  }
+
+  private applyHover(event: MouseEvent): void {
+    if (this.onHover === 0 || this.hoverHidden()) return;
+    if (event.ctrlKey || event.shiftKey || event.altKey) return;
+    this.hoverHidden.set(true);
+    const canvas = this.canvasRef()?.nativeElement;
+    if (!canvas) return;
+    if (this.onHover === 1) {
+      this.setCanvasOpacity(0);
+    } else {
+      canvas.style.transition = 'opacity 150ms linear';
+      canvas.style.opacity = '0';
+    }
+  }
+
+  private restoreHover(): void {
+    if (!this.hoverHidden()) return;
+    this.hoverHidden.set(false);
+    this.setCanvasOpacity(this.baseOpacity);
+  }
+
+  private setCanvasOpacity(value: number): void {
+    const canvas = this.canvasRef()?.nativeElement;
+    if (canvas) canvas.style.opacity = String(value);
+  }
+
+  private clearFade(): void {
+    if (this.fadeTimer !== null) {
+      clearTimeout(this.fadeTimer);
+      this.fadeTimer = null;
+    }
+    const canvas = this.canvasRef()?.nativeElement;
+    if (canvas) canvas.style.transition = 'none';
+  }
+
+  private runFade(show: boolean, durationMs: number): void {
+    const canvas = this.canvasRef()?.nativeElement;
+    if (!canvas) return;
+    this.clearFade();
+    const duration = Math.max(0, durationMs);
+    canvas.style.transition = 'none';
+    canvas.style.opacity = String(show ? 0 : this.baseOpacity);
+    void canvas.offsetWidth;
+    canvas.style.transition = duration
+      ? `opacity ${duration}ms linear`
+      : 'none';
+    canvas.style.opacity = String(show ? this.baseOpacity : 0);
+    if (!show) {
+      this.fadeTimer = setTimeout(() => {
+        this.fadeTimer = null;
+        void this.ipc.hideSkinWindow(this.label);
+        canvas.style.transition = 'none';
+        canvas.style.opacity = String(this.baseOpacity);
+      }, duration + 20);
+    }
   }
 
   private async savePosition(): Promise<void> {
@@ -377,6 +664,19 @@ export class SkinView implements AfterViewInit, OnDestroy {
       await this.ipc.saveSkinPosition(this.label);
     } catch (cause) {
       await this.logError('position', cause);
+    }
+  }
+
+  private async startSelectionDrag(additive: boolean): Promise<void> {
+    try {
+      const selected = await this.ipc.selectSkin(this.label, additive);
+      if (!selected) return;
+      this.dragging = true;
+      await this.ipc.setSkinDragging(this.label, true);
+      await this.startDragging();
+    } catch (cause) {
+      this.dragging = false;
+      await this.logError('sélection', cause);
     }
   }
 
@@ -391,7 +691,10 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
   private async execute(command: string): Promise<void> {
     try {
-      await this.ipc.executeBang(this.label, command);
+      await this.ipc.executeBang(
+        this.label,
+        expandMouseVariables(command, this.mouseX, this.mouseY),
+      );
     } catch (cause) {
       await this.logError('action', cause);
     }

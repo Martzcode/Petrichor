@@ -7,7 +7,7 @@ use crate::diagnostics::Diagnostics;
 use crate::ini::IniDocument;
 use crate::measure::MeasureEngine;
 use crate::model::{
-    build_skin_with_document, build_skin_with_overrides, BackgroundMode, Meter, Skin,
+    build_skin_with_document, build_skin_with_overrides, BackgroundMode, ContextItem, Meter, Skin,
 };
 use crate::readers::{
     read_bool, read_color, read_f32, read_floats, read_i32, read_u32, try_read_rect_ltrb, Color,
@@ -77,6 +77,9 @@ pub struct CommonMeter {
     pub left_mouse_up_action: Option<String>,
     pub mouse_over_action: Option<String>,
     pub mouse_leave_action: Option<String>,
+    pub mouse_actions: BTreeMap<String, String>,
+    pub mouse_action_cursor: bool,
+    pub mouse_action_cursor_name: Option<String>,
     pub container: Option<String>,
     pub transformation_matrix: Option<Vec<f32>>,
     pub bevel_type: String,
@@ -347,6 +350,7 @@ pub struct RenderModel {
     pub dynamic_window_size: bool,
     pub tooltip_hidden: bool,
     pub on_refresh_action: Option<String>,
+    pub context_menu: Vec<ContextItem>,
     pub background: Background,
     pub meters: Vec<RenderMeter>,
     pub local_fonts: Vec<PathBuf>,
@@ -415,6 +419,15 @@ fn build_model_from_skin(
         dynamic_window_size: skin.settings.dynamic_window_size,
         tooltip_hidden: skin.settings.tooltip_hidden,
         on_refresh_action: skin.settings.on_refresh_action.clone(),
+        context_menu: skin
+            .settings
+            .context_menu
+            .iter()
+            .map(|item| ContextItem {
+                title: variables.expand(&item.title),
+                action: item.action.clone(),
+            })
+            .collect(),
         background: render_background(&skin),
         meters,
         local_fonts: collect_local_fonts(&skin),
@@ -489,6 +502,42 @@ fn opt(options: &[(String, String)], variables: &Variables, key: &str) -> Option
         .map(|(_, value)| variables.expand(value))
 }
 
+const MOUSE_ACTIONS: [&str; 21] = [
+    "LeftMouseUpAction",
+    "LeftMouseDownAction",
+    "LeftMouseDoubleClickAction",
+    "RightMouseUpAction",
+    "RightMouseDownAction",
+    "RightMouseDoubleClickAction",
+    "MiddleMouseUpAction",
+    "MiddleMouseDownAction",
+    "MiddleMouseDoubleClickAction",
+    "X1MouseUpAction",
+    "X1MouseDownAction",
+    "X1MouseDoubleClickAction",
+    "X2MouseUpAction",
+    "X2MouseDownAction",
+    "X2MouseDoubleClickAction",
+    "MouseScrollUpAction",
+    "MouseScrollDownAction",
+    "MouseScrollLeftAction",
+    "MouseScrollRightAction",
+    "MouseOverAction",
+    "MouseLeaveAction",
+];
+
+fn mouse_actions(options: &[(String, String)], variables: &Variables) -> BTreeMap<String, String> {
+    let mut actions = BTreeMap::new();
+    for name in MOUSE_ACTIONS {
+        if let Some(value) = opt(options, variables, name) {
+            if !value.trim().is_empty() {
+                actions.insert(name.to_ascii_lowercase(), value);
+            }
+        }
+    }
+    actions
+}
+
 fn build_common(
     meter: &Meter,
     options: &[(String, String)],
@@ -536,6 +585,12 @@ fn build_common(
         left_mouse_up_action: opt(options, variables, "LeftMouseUpAction"),
         mouse_over_action: opt(options, variables, "MouseOverAction"),
         mouse_leave_action: opt(options, variables, "MouseLeaveAction"),
+        mouse_actions: mouse_actions(options, variables),
+        mouse_action_cursor: opt(options, variables, "MouseActionCursor")
+            .map(|value| read_bool(&value, skin.settings.mouse_action_cursor))
+            .unwrap_or(skin.settings.mouse_action_cursor),
+        mouse_action_cursor_name: opt(options, variables, "MouseActionCursorName")
+            .or_else(|| skin.settings.mouse_action_cursor_name.clone()),
         container: opt(options, variables, "Container")
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
@@ -1374,6 +1429,73 @@ mod tests {
         let path = dir.join("Demo.ini");
         fs::write(&path, body).unwrap();
         path
+    }
+
+    #[test]
+    fn exposes_every_mouse_action_and_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_skin(
+            dir.path(),
+            "\
+[Petrichor]
+MouseActionCursor=1
+MouseActionCursorName=Hand
+
+[MeterPanel]
+Meter=String
+Text=M
+LeftMouseDownAction=!Log down
+LeftMouseDoubleClickAction=!Log double
+RightMouseUpAction=!Log right
+MiddleMouseDownAction=!Log middle
+X1MouseUpAction=!Log x1
+X2MouseUpAction=!Log x2
+MouseScrollUpAction=!Log up
+MouseScrollDownAction=!Log down
+MouseScrollLeftAction=!Log left
+MouseScrollRightAction=!Log right
+MouseOverAction=!Log over
+MouseLeaveAction=!Log leave
+",
+        );
+        let (model, diagnostics) = build_render_model(&path);
+        assert!(diagnostics.is_empty());
+        let RenderMeter::String { common, .. } = &model.meters[0] else {
+            panic!("meter String attendu");
+        };
+        assert_eq!(common.mouse_actions.len(), 12);
+        assert_eq!(
+            common
+                .mouse_actions
+                .get("rightmouseupaction")
+                .map(String::as_str),
+            Some("!Log right")
+        );
+        assert!(common.mouse_action_cursor);
+        assert_eq!(common.mouse_action_cursor_name.as_deref(), Some("Hand"));
+    }
+
+    #[test]
+    fn expands_context_menu_titles() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_skin(
+            dir.path(),
+            "\
+[Variables]
+Label=Horloge
+
+[Petrichor]
+ContextTitle=Ouvrir #Label#
+ContextAction=[!Log menu]
+ContextTitle2=-
+",
+        );
+        let (model, diagnostics) = build_render_model(&path);
+        assert!(diagnostics.is_empty());
+        assert_eq!(model.context_menu.len(), 2);
+        assert_eq!(model.context_menu[0].title, "Ouvrir Horloge");
+        assert_eq!(model.context_menu[0].action, "[!Log menu]");
+        assert_eq!(model.context_menu[1].title, "-");
     }
 
     #[test]

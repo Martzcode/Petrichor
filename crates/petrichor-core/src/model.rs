@@ -52,6 +52,12 @@ impl BevelType {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContextItem {
+    pub title: String,
+    pub action: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SkinSettings {
     pub update_ms: u32,
@@ -80,6 +86,7 @@ pub struct SkinSettings {
     pub on_wake_action: Option<String>,
     pub mouse_action_cursor: bool,
     pub mouse_action_cursor_name: Option<String>,
+    pub context_menu: Vec<ContextItem>,
     pub defaults: BTreeMap<String, String>,
 }
 
@@ -112,6 +119,7 @@ impl Default for SkinSettings {
             on_wake_action: None,
             mouse_action_cursor: true,
             mouse_action_cursor_name: None,
+            context_menu: Vec::new(),
             defaults: BTreeMap::new(),
         }
     }
@@ -189,6 +197,7 @@ impl SkinSettings {
         }
         settings.mouse_action_cursor_name =
             section.get("MouseActionCursorName").map(str::to_string);
+        settings.context_menu = parse_context_menu(section);
 
         for entry in &section.entries {
             if entry.key.len() > 7 && entry.key[..7].eq_ignore_ascii_case("Default") {
@@ -471,6 +480,29 @@ fn build_skin_from_resolved(
     (skin, document, diagnostics)
 }
 
+fn parse_context_menu(section: &crate::ini::IniSection) -> Vec<ContextItem> {
+    let mut items = Vec::new();
+    for index in 1..=32 {
+        let suffix = if index == 1 {
+            String::new()
+        } else {
+            index.to_string()
+        };
+        let Some(title) = section.get(&format!("ContextTitle{suffix}")) else {
+            continue;
+        };
+        let action = section
+            .get(&format!("ContextAction{suffix}"))
+            .unwrap_or_default()
+            .to_string();
+        items.push(ContextItem {
+            title: title.to_string(),
+            action,
+        });
+    }
+    items
+}
+
 fn split_list(value: &str) -> Vec<String> {
     value
         .split('|')
@@ -568,6 +600,35 @@ Text=%1
         assert!(skin.settings.dynamic_window_size);
         assert_eq!(skin.settings.group, vec!["Top", "Clock"]);
         assert_eq!(skin.settings.solid_color, Some(Color::new(0, 0, 0, 0x80)));
+    }
+
+    #[test]
+    fn parses_custom_context_menu() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Menu.ini");
+        fs::write(
+            &path,
+            "\
+[Petrichor]
+ContextTitle=Rafraîchir
+ContextAction=[!Refresh]
+ContextTitle2=-
+ContextAction2=
+ContextTitle3=Ouvrir #Target#
+ContextAction3=[!SetClip \"#Target#\"]
+",
+        )
+        .unwrap();
+        let (skin, _) = build_skin(&path);
+
+        assert_eq!(skin.settings.context_menu.len(), 3);
+        assert_eq!(skin.settings.context_menu[0].title, "Rafraîchir");
+        assert_eq!(skin.settings.context_menu[0].action, "[!Refresh]");
+        assert_eq!(skin.settings.context_menu[1].title, "-");
+        assert_eq!(
+            skin.settings.context_menu[2].action,
+            "[!SetClip \"#Target#\"]"
+        );
     }
 
     #[test]

@@ -84,7 +84,7 @@ pub fn default_skin_root() -> Option<String> {
     skin_root().map(|path| path.to_string_lossy().to_string())
 }
 
-fn skin_root() -> Option<PathBuf> {
+pub(crate) fn skin_root() -> Option<PathBuf> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skins-demo");
     path.is_dir().then_some(path)
 }
@@ -155,16 +155,24 @@ pub fn load_render_model(path: String, store: tauri::State<'_, MeasureStore>) ->
 fn window_flags(path: &Path) -> WindowFlags {
     let defaults = WindowFlags {
         always_on_top: false,
+        always_on_bottom: false,
+        on_hover: 0,
         click_through: false,
         draggable: false,
         skip_taskbar: true,
+        opacity: 255,
+        fade_duration: 250,
     };
     persistence::load_state(path)
         .map(|state| WindowFlags {
             always_on_top: state.always_on_top >= 1,
+            always_on_bottom: state.always_on_top <= -2,
+            on_hover: state.on_hover.clamp(0, 2) as u8,
             click_through: state.click_through,
             draggable: state.draggable,
             skip_taskbar: defaults.skip_taskbar,
+            opacity: state.alpha_value,
+            fade_duration: state.fade_duration,
         })
         .unwrap_or(defaults)
 }
@@ -274,6 +282,82 @@ impl MeasureStore {
         self.with_engine(path, |engine| engine.set_variable(name, value));
     }
 
+    fn skin(&self, path: &Path) -> Option<petrichor_core::Skin> {
+        let key = Self::store_key(path);
+        let overrides = self
+            .options
+            .lock()
+            .ok()
+            .and_then(|options| options.get(&key).cloned());
+        Some(match overrides {
+            Some(overrides) => petrichor_core::build_skin_with_overrides(path, &overrides).0,
+            None => petrichor_core::build_skin(path).0,
+        })
+    }
+
+    pub fn meter_names_in_group(&self, path: &Path, group: &str) -> Vec<String> {
+        let Some(skin) = self.skin(path) else {
+            return Vec::new();
+        };
+        skin.meters
+            .iter()
+            .filter(|meter| group_matches(&meter.options, group))
+            .map(|meter| meter.name.clone())
+            .collect()
+    }
+
+    pub fn measure_names_in_group(&self, path: &Path, group: &str) -> Vec<String> {
+        let Some(skin) = self.skin(path) else {
+            return Vec::new();
+        };
+        skin.measures
+            .iter()
+            .filter(|measure| group_matches(&measure.options, group))
+            .map(|measure| measure.name.clone())
+            .collect()
+    }
+
+    pub fn meter_hidden(&self, path: &Path, name: &str) -> bool {
+        self.skin(path)
+            .and_then(|skin| {
+                skin.meter(name)
+                    .and_then(|meter| meter.options.get("Hidden"))
+                    .map(|value| petrichor_core::readers::read_bool(value, false))
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn measure_flag(&self, path: &Path, name: &str, option: &str) -> bool {
+        self.skin(path)
+            .and_then(|skin| {
+                skin.measure(name)
+                    .and_then(|measure| measure.options.get(option))
+                    .map(|value| petrichor_core::readers::read_bool(value, false))
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn set_option_group(&self, path: &Path, group: &str, option: &str, value: &str) {
+        let Some(skin) = self.skin(path) else {
+            return;
+        };
+        let mut names: Vec<String> = skin
+            .meters
+            .iter()
+            .filter(|meter| group_matches(&meter.options, group))
+            .map(|meter| meter.name.clone())
+            .collect();
+        names.extend(
+            skin.measures
+                .iter()
+                .filter(|measure| group_matches(&measure.options, group))
+                .map(|measure| measure.name.clone()),
+        );
+        for name in names {
+            self.set_option(path, &name, option, value);
+        }
+    }
+
     pub fn options(&self, path: &Path) -> Option<OptionOverrides> {
         let key = Self::store_key(path);
         self.options.lock().ok()?.get(&key).cloned()
@@ -314,6 +398,21 @@ impl MeasureStore {
     }
 }
 
+fn group_matches(options: &petrichor_core::Options, group: &str) -> bool {
+    if group.trim() == "*" {
+        return true;
+    }
+    options
+        .get("Group")
+        .map(|value| {
+            value
+                .split('|')
+                .map(str::trim)
+                .any(|candidate| candidate.eq_ignore_ascii_case(group.trim()))
+        })
+        .unwrap_or(false)
+}
+
 impl Default for MeasureStore {
     fn default() -> Self {
         Self::new()
@@ -351,6 +450,55 @@ pub fn demo_event(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_meter_and_measure_groups() {
+        let path =
+            std::env::temp_dir().join(format!("petrichor-groups-{}.ini", std::process::id()));
+        std::fs::write(
+            &path,
+            "\
+[MeterA]
+Meter=String
+Group=Top|Shared
+Text=A
+
+[MeterB]
+Meter=String
+Group=Bottom
+Text=B
+
+[MeasureA]
+Measure=Calc
+Group=Shared
+Formula=1
+",
+        )
+        .unwrap();
+
+        let store = MeasureStore::new();
+        assert_eq!(
+            store.meter_names_in_group(&path, "top"),
+            vec!["MeterA".to_string()]
+        );
+        assert_eq!(
+            store.meter_names_in_group(&path, "Shared"),
+            vec!["MeterA".to_string()]
+        );
+        assert_eq!(
+            store.measure_names_in_group(&path, "shared"),
+            vec!["MeasureA".to_string()]
+        );
+        assert!(!store.meter_hidden(&path, "MeterA"));
+
+        store.set_option(&path, "MeterA", "Hidden", "1");
+        assert!(store.meter_hidden(&path, "MeterA"));
+
+        store.set_option_group(&path, "Shared", "Hidden", "1");
+        assert!(store.meter_hidden(&path, "MeterA"));
+
+        std::fs::remove_file(&path).ok();
+    }
 
     #[test]
     fn store_keeps_variables_between_reads() {

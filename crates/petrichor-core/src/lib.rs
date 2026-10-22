@@ -2,6 +2,7 @@ pub mod bang;
 pub mod config;
 pub mod diagnostics;
 pub mod error;
+pub mod files;
 pub mod formula;
 pub mod include;
 pub mod ini;
@@ -17,13 +18,14 @@ pub mod validate;
 pub mod variables;
 
 pub use bang::{parse as parse_bangs, Bang};
-pub use config::{ApplicationConfig, GlobalSettings, IniFile, Section, SkinState};
+pub use config::{ApplicationConfig, GlobalSettings, IniFile, Section, SkinState, TrayMeasure};
 pub use diagnostics::{Diagnostic, Diagnostics, Severity};
 pub use error::{CoreError, Result};
+pub use files::write_key_value;
 pub use ini::{Encoding, IniDocument, IniEntry, IniSection};
 pub use model::{
     build_skin, build_skin_with_document, build_skin_with_overrides, BackgroundMode, BevelType,
-    Measure, Metadata, Meter, Options, Skin, SkinSettings,
+    ContextItem, Measure, Metadata, Meter, Options, Skin, SkinSettings,
 };
 pub use readers::{Color, ReadError, ReadResult, Rect};
 pub use reference::{MeasureSource, MeasureValue, Reference, ReferenceError};

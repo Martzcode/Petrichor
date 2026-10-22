@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bang {
     pub name: String,
+    pub raw_name: String,
     pub args: Vec<String>,
     pub external: bool,
 }
@@ -31,40 +32,75 @@ impl Bang {
 }
 
 pub fn parse(input: &str) -> Vec<Bang> {
+    let chars: Vec<char> = input.chars().collect();
     let mut bangs = Vec::new();
     let mut current = String::new();
     let mut inside = false;
-    let mut quote: Option<char> = None;
+    let mut quote = Quote::None;
+    let mut index = 0;
 
-    for ch in input.chars() {
-        if let Some(delimiter) = quote {
-            current.push(ch);
-            if ch == delimiter {
-                quote = None;
-            }
-            continue;
-        }
+    while index < chars.len() {
+        let ch = chars[index];
 
-        match ch {
-            '"' | '\'' => {
-                quote = Some(ch);
+        match quote {
+            Quote::Single => {
                 current.push(ch);
-            }
-            '[' if !inside => {
-                if let Some(bang) = parse_one(&current) {
-                    bangs.push(bang);
+                if ch == '\'' {
+                    quote = Quote::None;
                 }
-                current.clear();
-                inside = true;
+                index += 1;
             }
-            ']' if inside => {
-                if let Some(bang) = parse_one(&current) {
-                    bangs.push(bang);
+            Quote::Double => {
+                current.push(ch);
+                if ch == '"' && !starts_with_triple(&chars, index) {
+                    quote = Quote::None;
                 }
-                current.clear();
-                inside = false;
+                index += 1;
             }
-            _ => current.push(ch),
+            Quote::Triple => {
+                if starts_with_triple(&chars, index) {
+                    current.push_str("\"\"\"");
+                    quote = Quote::None;
+                    index += 3;
+                } else {
+                    current.push(ch);
+                    index += 1;
+                }
+            }
+            Quote::None => {
+                if starts_with_triple(&chars, index) {
+                    current.push_str("\"\"\"");
+                    quote = Quote::Triple;
+                    index += 3;
+                } else {
+                    match ch {
+                        '"' => {
+                            quote = Quote::Double;
+                            current.push(ch);
+                        }
+                        '\'' => {
+                            quote = Quote::Single;
+                            current.push(ch);
+                        }
+                        '[' if !inside => {
+                            if let Some(bang) = parse_one(&current) {
+                                bangs.push(bang);
+                            }
+                            current.clear();
+                            inside = true;
+                        }
+                        ']' if inside => {
+                            if let Some(bang) = parse_one(&current) {
+                                bangs.push(bang);
+                            }
+                            current.clear();
+                            inside = false;
+                        }
+                        _ => current.push(ch),
+                    }
+                    index += 1;
+                }
+            }
         }
     }
 
@@ -73,6 +109,20 @@ pub fn parse(input: &str) -> Vec<Bang> {
     }
 
     bangs
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Quote {
+    None,
+    Single,
+    Double,
+    Triple,
+}
+
+fn starts_with_triple(chars: &[char], index: usize) -> bool {
+    chars.get(index) == Some(&'"')
+        && chars.get(index + 1) == Some(&'"')
+        && chars.get(index + 2) == Some(&'"')
 }
 
 pub fn parse_one(input: &str) -> Option<Bang> {
@@ -91,6 +141,7 @@ pub fn parse_one(input: &str) -> Option<Bang> {
 
     Some(Bang {
         name,
+        raw_name: first.trim_start_matches('!').trim().to_string(),
         args: tokens[1..].to_vec(),
         external,
     })
@@ -117,35 +168,70 @@ fn normalize_rainmeter(input: &str) -> String {
 }
 
 fn tokenize(input: &str) -> Vec<String> {
+    let chars: Vec<char> = input.chars().collect();
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut started = false;
-    let mut quote: Option<char> = None;
+    let mut quote = Quote::None;
+    let mut index = 0;
 
-    for ch in input.chars() {
-        if let Some(delimiter) = quote {
-            if ch == delimiter {
-                quote = None;
-            } else {
-                current.push(ch);
-            }
-            continue;
-        }
+    while index < chars.len() {
+        let ch = chars[index];
 
-        match ch {
-            '"' | '\'' => {
-                quote = Some(ch);
-                started = true;
+        match quote {
+            Quote::Single => {
+                if ch == '\'' {
+                    quote = Quote::None;
+                } else {
+                    current.push(ch);
+                }
+                index += 1;
             }
-            ch if ch.is_whitespace() => {
-                if started {
-                    tokens.push(std::mem::take(&mut current));
-                    started = false;
+            Quote::Double => {
+                if ch == '"' {
+                    quote = Quote::None;
+                } else {
+                    current.push(ch);
+                }
+                index += 1;
+            }
+            Quote::Triple => {
+                if starts_with_triple(&chars, index) {
+                    quote = Quote::None;
+                    index += 3;
+                } else {
+                    current.push(ch);
+                    index += 1;
                 }
             }
-            ch => {
-                current.push(ch);
-                started = true;
+            Quote::None => {
+                if starts_with_triple(&chars, index) {
+                    quote = Quote::Triple;
+                    started = true;
+                    index += 3;
+                } else {
+                    match ch {
+                        '"' => {
+                            quote = Quote::Double;
+                            started = true;
+                        }
+                        '\'' => {
+                            quote = Quote::Single;
+                            started = true;
+                        }
+                        ch if ch.is_whitespace() => {
+                            if started {
+                                tokens.push(std::mem::take(&mut current));
+                                started = false;
+                            }
+                        }
+                        ch => {
+                            current.push(ch);
+                            started = true;
+                        }
+                    }
+                    index += 1;
+                }
             }
         }
     }
@@ -216,6 +302,7 @@ mod tests {
         let bang = parse_one("xdg-open https://example.org").unwrap();
         assert!(!bang.is_bang());
         assert_eq!(bang.name, "XDG-OPEN");
+        assert_eq!(bang.raw_name, "xdg-open");
         assert_eq!(bang.args, vec!["https://example.org"]);
     }
 
@@ -224,6 +311,30 @@ mod tests {
         let bang = parse_one("ééééé").unwrap();
         assert!(!bang.is_bang());
         assert_eq!(bang.name, "ééééé");
+    }
+
+    #[test]
+    fn keeps_triple_quoted_literals_as_one_argument() {
+        let bang = parse_one(r#"!SetVariable Text """a "b" [c] d""""#).unwrap();
+        assert_eq!(bang.args, vec!["Text", r#"a "b" [c] d"#]);
+    }
+
+    #[test]
+    fn ignores_brackets_inside_quoted_arguments() {
+        let bangs = parse("!SetVariable Text \"[not a bang]\" [!Redraw]");
+        assert_eq!(bangs.len(), 2);
+        assert_eq!(bangs[0].args, vec!["Text", "[not a bang]"]);
+        assert_eq!(bangs[1].name, "REDRAW");
+    }
+
+    #[test]
+    fn parses_delay_and_play_commands() {
+        let bangs = parse("[!Log start][!Delay 250][PLAY \"sound.wav\"]");
+        assert_eq!(bangs.len(), 3);
+        assert_eq!(bangs[1].name, "DELAY");
+        assert_eq!(bangs[1].number(0), Some(250.0));
+        assert_eq!(bangs[2].name, "PLAY");
+        assert!(!bangs[2].is_bang());
     }
 
     #[test]

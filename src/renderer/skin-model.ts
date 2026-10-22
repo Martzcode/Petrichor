@@ -41,6 +41,9 @@ export interface CommonMeter {
   left_mouse_up_action: string | null;
   mouse_over_action: string | null;
   mouse_leave_action: string | null;
+  mouse_actions?: Record<string, string>;
+  mouse_action_cursor?: boolean;
+  mouse_action_cursor_name?: string | null;
   container?: string | null;
   transformation_matrix?: number[] | null;
   bevel_type?: string;
@@ -246,6 +249,11 @@ export interface Background {
   gradient_angle: number;
 }
 
+export interface ContextMenuItem {
+  title: string;
+  action: string;
+}
+
 export interface RenderModel {
   name: string;
   width: number | null;
@@ -254,6 +262,7 @@ export interface RenderModel {
   dynamic_window_size: boolean;
   tooltip_hidden?: boolean;
   on_refresh_action?: string | null;
+  context_menu?: ContextMenuItem[];
   background: Background;
   meters: RenderMeter[];
   local_fonts: string[];

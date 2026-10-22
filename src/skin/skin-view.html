@@ -4,9 +4,18 @@
   (mouseleave)="onMouseLeave()"
   (mousedown)="onMouseDown($event)"
   (mouseup)="onMouseUp($event)"
+  (dblclick)="onMouseDoubleClick($event)"
+  (wheel)="onMouseScroll($event)"
+  (contextmenu)="onContextMenu($event)"
 ></canvas>
 
-@if (error(); as message) {
+@if (selectionActive() && !hoverHidden()) {
+<div
+  class="selection-outline"
+  [class.selected]="selectionSelected()"
+  [style.borderColor]="selectionColor()"
+></div>
+} @if (error(); as message) {
 <pre class="skin-error">{{ message }}</pre>
 } @if (tooltip(); as tip) {
 <div

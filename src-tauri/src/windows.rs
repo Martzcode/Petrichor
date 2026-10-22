@@ -4,7 +4,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, LogicalSize, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindowBuilder,
+};
 
 use crate::persistence;
 
@@ -12,6 +14,8 @@ use crate::persistence;
 pub struct SkinWindowInfo {
     pub label: String,
     pub path: PathBuf,
+    pub name: String,
+    pub groups: Vec<String>,
     pub always_on_top: bool,
     pub click_through: bool,
     pub draggable: bool,
@@ -35,9 +39,25 @@ pub struct SkinToggleResult {
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct WindowFlags {
     pub always_on_top: bool,
+    #[serde(default)]
+    pub always_on_bottom: bool,
+    #[serde(default)]
+    pub on_hover: u8,
     pub click_through: bool,
     pub draggable: bool,
     pub skip_taskbar: bool,
+    #[serde(default = "default_opacity")]
+    pub opacity: u8,
+    #[serde(default = "default_fade_duration")]
+    pub fade_duration: u32,
+}
+
+fn default_opacity() -> u8 {
+    255
+}
+
+fn default_fade_duration() -> u32 {
+    250
 }
 
 #[derive(Default)]
@@ -148,6 +168,33 @@ impl SkinWindows {
             .map(|info| info.label.clone())
     }
 
+    pub fn find_targets(&self, target: &str) -> Vec<String> {
+        let target = target.trim();
+        if target == "*" {
+            return self.list().into_iter().map(|info| info.label).collect();
+        }
+        let key = target.to_lowercase();
+        let map = match self.inner.lock() {
+            Ok(map) => map,
+            Err(_) => return Vec::new(),
+        };
+        let mut labels: Vec<String> = map
+            .values()
+            .filter(|info| {
+                info.label.eq_ignore_ascii_case(&key)
+                    || info.name.eq_ignore_ascii_case(&key)
+                    || info.path.to_string_lossy().to_lowercase().contains(&key)
+                    || info
+                        .groups
+                        .iter()
+                        .any(|group| group.eq_ignore_ascii_case(&key))
+            })
+            .map(|info| info.label.clone())
+            .collect();
+        labels.sort();
+        labels
+    }
+
     pub fn list(&self) -> Vec<SkinWindowInfo> {
         match self.inner.lock() {
             Ok(map) => {
@@ -172,6 +219,18 @@ pub fn open_window(
     let path = canonical(&path);
     let label = windows.next_label();
     let state = persistence::load_state(&path);
+    let (skin, _) = petrichor_core::build_skin(&path);
+    let mut groups = skin.settings.group.clone();
+    if let Some(state) = &state {
+        for group in &state.group {
+            if !groups
+                .iter()
+                .any(|current| current.eq_ignore_ascii_case(group))
+            {
+                groups.push(group.clone());
+            }
+        }
+    }
 
     let always_on_top = state
         .as_ref()
@@ -186,6 +245,8 @@ pub fn open_window(
     windows.insert(SkinWindowInfo {
         label: label.clone(),
         path: path.clone(),
+        name: skin.name.clone(),
+        groups,
         always_on_top,
         click_through,
         draggable,
@@ -214,6 +275,8 @@ pub fn open_window(
         }
         if state.always_on_top > 0 {
             builder = builder.always_on_top(true);
+        } else if state.always_on_top <= -2 {
+            builder = builder.always_on_bottom(true);
         }
     }
 
@@ -235,6 +298,103 @@ pub fn open_window(
     }
 }
 
+const SNAP_DISTANCE: i32 = 16;
+
+#[allow(clippy::too_many_arguments)]
+fn adjusted_position(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    monitor_x: i32,
+    monitor_y: i32,
+    monitor_width: i32,
+    monitor_height: i32,
+    snap_edges: bool,
+    keep_on_screen: bool,
+) -> (i32, i32) {
+    let mut x = x;
+    let mut y = y;
+    if snap_edges {
+        if (x - monitor_x).abs() <= SNAP_DISTANCE {
+            x = monitor_x;
+        }
+        if (y - monitor_y).abs() <= SNAP_DISTANCE {
+            y = monitor_y;
+        }
+        let right = monitor_x + monitor_width - width;
+        if (x - right).abs() <= SNAP_DISTANCE {
+            x = right;
+        }
+        let bottom = monitor_y + monitor_height - height;
+        if (y - bottom).abs() <= SNAP_DISTANCE {
+            y = bottom;
+        }
+    }
+    if keep_on_screen {
+        if width >= monitor_width {
+            x = monitor_x;
+        } else {
+            x = x.clamp(monitor_x, monitor_x + monitor_width - width);
+        }
+        if height >= monitor_height {
+            y = monitor_y;
+        } else {
+            y = y.clamp(monitor_y, monitor_y + monitor_height - height);
+        }
+    }
+    (x, y)
+}
+
+pub fn snap_and_keep(app: &AppHandle, windows: &SkinWindows, label: &str) -> Result<(), String> {
+    let Some(info) = windows.info(label) else {
+        return Ok(());
+    };
+    let Some(state) = persistence::load_state(&info.path) else {
+        return Ok(());
+    };
+    if !state.snap_edges && !state.keep_on_screen {
+        return Ok(());
+    }
+    let Some(window) = app.get_webview_window(label) else {
+        return Ok(());
+    };
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .or(window
+            .primary_monitor()
+            .map_err(|error| error.to_string())?);
+    let Some(monitor) = monitor else {
+        return Ok(());
+    };
+
+    let mpos = monitor.position();
+    let msize = monitor.size();
+    let (x, y) = adjusted_position(
+        position.x,
+        position.y,
+        size.width as i32,
+        size.height as i32,
+        mpos.x,
+        mpos.y,
+        msize.width as i32,
+        msize.height as i32,
+        state.snap_edges,
+        state.keep_on_screen,
+    );
+    if x == position.x && y == position.y {
+        return Ok(());
+    }
+    window
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|error| error.to_string())?;
+    save_position(app, windows, label)?;
+    Ok(())
+}
+
 pub fn apply_flags(
     app: &AppHandle,
     windows: &SkinWindows,
@@ -247,6 +407,9 @@ pub fn apply_flags(
 
     window
         .set_always_on_top(flags.always_on_top)
+        .map_err(|e| e.to_string())?;
+    window
+        .set_always_on_bottom(flags.always_on_bottom)
         .map_err(|e| e.to_string())?;
     window
         .set_skip_taskbar(flags.skip_taskbar)
@@ -314,6 +477,13 @@ pub fn show(app: &AppHandle, label: &str) -> Result<(), String> {
         .get_webview_window(label)
         .ok_or_else(|| format!("fenêtre introuvable: {label}"))?;
     window.show().map_err(|e| e.to_string())
+}
+
+pub fn hide(app: &AppHandle, label: &str) -> Result<(), String> {
+    let window = app
+        .get_webview_window(label)
+        .ok_or_else(|| format!("fenêtre introuvable: {label}"))?;
+    window.hide().map_err(|e| e.to_string())
 }
 
 pub fn close(app: &AppHandle, windows: &SkinWindows, label: &str) -> Result<(), String> {
@@ -414,12 +584,24 @@ pub fn show_skin_window(app: AppHandle, label: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn hide_skin_window(app: AppHandle, label: String) -> Result<(), String> {
+    hide(&app, &label)
+}
+
+#[tauri::command]
 pub fn set_skin_dragging(
+    app: AppHandle,
     windows: State<'_, SkinWindows>,
+    selection: State<'_, crate::selection::SelectionState>,
     label: String,
     dragging: bool,
 ) -> Result<(), String> {
     windows.set_dragging(&label, dragging);
+    if dragging {
+        selection.start_drag(&app, &windows, &label)?;
+    } else {
+        selection.finish_drag(&app, &windows, &label)?;
+    }
     Ok(())
 }
 
@@ -449,6 +631,8 @@ mod tests {
         windows.insert(SkinWindowInfo {
             label: "skin-1".to_string(),
             path: PathBuf::from("/tmp/a.ini"),
+            name: "a".to_string(),
+            groups: Vec::new(),
             always_on_top: false,
             click_through: false,
             draggable: false,
@@ -460,9 +644,13 @@ mod tests {
             "skin-1",
             WindowFlags {
                 always_on_top: true,
+                always_on_bottom: false,
+                on_hover: 0,
                 click_through: true,
                 draggable: true,
                 skip_taskbar: false,
+                opacity: 255,
+                fade_duration: 250,
             },
         );
         let info = windows.info("skin-1").unwrap();
@@ -475,11 +663,33 @@ mod tests {
     }
 
     #[test]
+    fn snaps_and_keeps_windows_on_monitor() {
+        assert_eq!(
+            adjusted_position(101, 54, 200, 100, 100, 50, 1000, 800, true, true),
+            (100, 50)
+        );
+        assert_eq!(
+            adjusted_position(890, 760, 200, 100, 100, 50, 1000, 800, true, true),
+            (900, 750)
+        );
+        assert_eq!(
+            adjusted_position(-40, 760, 200, 100, 0, 0, 800, 800, false, true),
+            (0, 700)
+        );
+        assert_eq!(
+            adjusted_position(300, 300, 200, 100, 0, 0, 800, 800, false, true),
+            (300, 300)
+        );
+    }
+
+    #[test]
     fn finds_window_by_path() {
         let windows = SkinWindows::new();
         windows.insert(SkinWindowInfo {
             label: "skin-1".to_string(),
             path: PathBuf::from("/tmp/a.ini"),
+            name: "a".to_string(),
+            groups: Vec::new(),
             always_on_top: false,
             click_through: false,
             draggable: false,

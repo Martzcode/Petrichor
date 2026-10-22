@@ -37,25 +37,48 @@ export interface Diagnostics {
 
 export interface WindowFlags {
   always_on_top: boolean;
+  always_on_bottom?: boolean;
+  on_hover?: number;
   click_through: boolean;
   draggable: boolean;
   skip_taskbar: boolean;
+  opacity?: number;
+  fade_duration?: number;
 }
 
 export interface SkinWindowInfo {
   label: string;
   path: string;
+  name?: string;
+  groups?: string[];
   always_on_top: boolean;
   click_through: boolean;
   draggable: boolean;
   skip_taskbar: boolean;
 }
 
+export type MouseActionState = 'enabled' | 'disabled' | 'cleared' | 'toggle';
+
 export type SkinCommand =
   | { command: 'redraw' }
   | { command: 'update' }
   | { command: 'refresh' }
-  | { command: 'draggable'; value: boolean };
+  | { command: 'draggable'; value: boolean }
+  | {
+      command: 'mouseActions';
+      target: string;
+      actions: string[];
+      state: MouseActionState;
+    }
+  | { command: 'opacity'; value: number }
+  | { command: 'fade'; show: boolean; duration_ms: number }
+  | {
+      command: 'selection';
+      active: boolean;
+      selected: boolean;
+      color: string;
+    }
+  | { command: 'onHover'; value: number };
 
 export interface AppPaths {
   config: string | null;
@@ -259,6 +282,18 @@ export class PetrichorIpc {
     await invoke('show_skin_window', { label });
   }
 
+  async showSkinMenu(label: string, x?: number, y?: number): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('show_skin_menu', { label, x, y });
+  }
+
+  async hideSkinWindow(label: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('hide_skin_window', { label });
+  }
+
   async saveSkinPosition(label: string): Promise<void> {
     if (!this.available()) return;
     const { invoke } = await import('@tauri-apps/api/core');
@@ -269,6 +304,18 @@ export class PetrichorIpc {
     if (!this.available()) return;
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('set_skin_dragging', { label, dragging });
+  }
+
+  async selectSkin(label: string, additive: boolean): Promise<boolean> {
+    if (!this.available()) return false;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<boolean>('select_skin', { label, additive });
+  }
+
+  async selectionActive(): Promise<boolean> {
+    if (!this.available()) return false;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<boolean>('selection_active');
   }
 
   async assetUrl(path: string): Promise<string> {

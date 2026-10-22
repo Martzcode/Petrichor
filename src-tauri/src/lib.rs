@@ -1,6 +1,12 @@
 mod bangs;
 mod commands;
+mod layouts;
+mod menu;
+mod notifications;
 mod persistence;
+mod selection;
+mod tray;
+mod tray_measure;
 mod windows;
 
 use tauri::{Emitter, Manager};
@@ -13,6 +19,9 @@ pub fn run() {
     tauri::Builder::default()
         .manage(windows::SkinWindows::new())
         .manage(commands::MeasureStore::new())
+        .manage(menu::MenuState::new())
+        .manage(selection::SelectionState::new())
+        .manage(tray_measure::TrayMeasureState::new())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -26,6 +35,7 @@ pub fn run() {
             }
             let app = window.app_handle();
             let windows = app.state::<windows::SkinWindows>();
+            let selection = app.state::<selection::SelectionState>();
             match event {
                 tauri::WindowEvent::Moved(position) => {
                     if windows.is_dragging(window.label())
@@ -39,11 +49,13 @@ pub fn run() {
                             });
                         }
                     }
+                    let _ = selection.window_moved(app, &windows, window.label(), *position);
                 }
                 tauri::WindowEvent::Destroyed => {
                     if let Some(info) = windows.info(window.label()) {
                         app.state::<commands::MeasureStore>().remove(&info.path);
                     }
+                    selection.remove(window.label());
                     windows.remove(window.label());
                 }
                 _ => {}
@@ -70,10 +82,23 @@ pub fn run() {
             windows::apply_skin_window_flags,
             windows::fit_skin_window,
             windows::show_skin_window,
+            windows::hide_skin_window,
             windows::save_skin_position,
             windows::set_skin_dragging,
+            selection::select_skin,
+            selection::selection_active,
+            menu::show_skin_menu,
         ])
         .setup(|app| {
+            app.on_menu_event(|app, event| {
+                tray::handle_menu_event(app, &event);
+                menu::handle_event(app, &event);
+            });
+            if let Err(error) = tray::setup(app.handle()) {
+                petrichor_core::logging::warning(format!("Icône de tray indisponible : {error}"));
+            } else {
+                tray_measure::spawn(app.handle());
+            }
             petrichor_core::logging::notice(format!(
                 "Petrichor {} démarré",
                 petrichor_core::version()

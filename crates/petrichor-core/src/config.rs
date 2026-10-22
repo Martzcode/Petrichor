@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
+use crate::readers::{try_read_color, Color};
 
 #[derive(Debug, Clone, Default)]
 pub struct Section {
@@ -194,6 +195,11 @@ pub struct GlobalSettings {
     pub net_in_speed: u64,
     pub net_out_speed: u64,
     pub disable_dragging: bool,
+    pub selected_color: Option<Color>,
+    pub tray_execute_r: Option<String>,
+    pub tray_execute_m: Option<String>,
+    pub tray_execute_dr: Option<String>,
+    pub tray_execute_dm: Option<String>,
     pub disable_version_check: bool,
     pub disable_auto_update: bool,
     pub hardware_acceleration: u8,
@@ -201,6 +207,77 @@ pub struct GlobalSettings {
     pub language: Option<u32>,
     pub tray_icon: bool,
     pub normal_stay_desktop: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrayMeasure {
+    pub measure: String,
+    pub tray_meter: String,
+    pub tray_color1: Color,
+    pub tray_color2: Color,
+    pub tray_bitmap: Option<String>,
+    pub tray_bitmap_frames: u32,
+}
+
+impl Default for TrayMeasure {
+    fn default() -> Self {
+        TrayMeasure {
+            measure: "CPU".to_string(),
+            tray_meter: "HISTOGRAM".to_string(),
+            tray_color1: Color {
+                r: 56,
+                g: 189,
+                b: 248,
+                a: 255,
+            },
+            tray_color2: Color {
+                r: 15,
+                g: 23,
+                b: 42,
+                a: 255,
+            },
+            tray_bitmap: None,
+            tray_bitmap_frames: 1,
+        }
+    }
+}
+
+impl TrayMeasure {
+    pub fn from_ini(ini: &IniFile) -> Option<Self> {
+        let section = ini.section("TrayMeasure")?;
+        let measure = section.get("Measure")?.trim();
+        if measure.is_empty() {
+            return None;
+        }
+        let defaults = TrayMeasure::default();
+        Some(TrayMeasure {
+            measure: measure.to_string(),
+            tray_meter: section
+                .get("TrayMeter")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(&defaults.tray_meter)
+                .to_uppercase(),
+            tray_color1: section
+                .get("TrayColor1")
+                .and_then(|value| try_read_color(value).ok())
+                .unwrap_or(defaults.tray_color1),
+            tray_color2: section
+                .get("TrayColor2")
+                .and_then(|value| try_read_color(value).ok())
+                .unwrap_or(defaults.tray_color2),
+            tray_bitmap: section
+                .get("TrayBitmap")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+            tray_bitmap_frames: section
+                .get("TrayBitmapFrames")
+                .and_then(|value| value.trim().parse().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(defaults.tray_bitmap_frames),
+        })
+    }
 }
 
 impl Default for GlobalSettings {
@@ -211,6 +288,11 @@ impl Default for GlobalSettings {
             net_in_speed: 1_000_000,
             net_out_speed: 1_000_000,
             disable_dragging: false,
+            selected_color: None,
+            tray_execute_r: None,
+            tray_execute_m: None,
+            tray_execute_dr: None,
+            tray_execute_dm: None,
             disable_version_check: false,
             disable_auto_update: false,
             hardware_acceleration: 2,
@@ -246,6 +328,21 @@ impl GlobalSettings {
         }
         if let Some(value) = section.get("DisableDragging") {
             settings.disable_dragging = parse_bool(value);
+        }
+        if let Some(value) = section.get("SelectedColor") {
+            settings.selected_color = try_read_color(value).ok();
+        }
+        if let Some(value) = section.get("TrayExecuteR") {
+            settings.tray_execute_r = Some(value.to_string());
+        }
+        if let Some(value) = section.get("TrayExecuteM") {
+            settings.tray_execute_m = Some(value.to_string());
+        }
+        if let Some(value) = section.get("TrayExecuteDR") {
+            settings.tray_execute_dr = Some(value.to_string());
+        }
+        if let Some(value) = section.get("TrayExecuteDM") {
+            settings.tray_execute_dm = Some(value.to_string());
         }
         if let Some(value) = section.get("DisableVersionCheck") {
             settings.disable_version_check = parse_bool(value);
@@ -291,6 +388,28 @@ impl GlobalSettings {
             "DisableDragging",
             bool_str(self.disable_dragging),
         );
+        if let Some(color) = self.selected_color {
+            ini.set(
+                RAINMETER_SECTION,
+                "SelectedColor",
+                &format!(
+                    "{:02X}{:02X}{:02X}{:02X}",
+                    color.r, color.g, color.b, color.a
+                ),
+            );
+        }
+        if let Some(action) = &self.tray_execute_r {
+            ini.set(RAINMETER_SECTION, "TrayExecuteR", action);
+        }
+        if let Some(action) = &self.tray_execute_m {
+            ini.set(RAINMETER_SECTION, "TrayExecuteM", action);
+        }
+        if let Some(action) = &self.tray_execute_dr {
+            ini.set(RAINMETER_SECTION, "TrayExecuteDR", action);
+        }
+        if let Some(action) = &self.tray_execute_dm {
+            ini.set(RAINMETER_SECTION, "TrayExecuteDM", action);
+        }
         ini.set(
             RAINMETER_SECTION,
             "DisableVersionCheck",
@@ -638,6 +757,48 @@ Active=1
         state.apply_to_section(&mut out);
         assert_eq!(out.get("WindowX"), Some("100"));
         assert_eq!(out.get("Group"), Some("Top|Clock"));
+    }
+
+    #[test]
+    fn persists_global_interaction_settings() {
+        let ini = IniFile::parse(
+            "[Petrichor]\nSelectedColor=38BDF8FF\nTrayExecuteM=!Log \"clic moyen\"\nTrayExecuteDR=!Refresh\n",
+        );
+        let settings = GlobalSettings::from_ini(&ini);
+        let color = settings.selected_color.unwrap();
+        assert_eq!((color.r, color.g, color.b, color.a), (56, 189, 248, 255));
+        assert_eq!(
+            settings.tray_execute_m.as_deref(),
+            Some("!Log \"clic moyen\"")
+        );
+        assert_eq!(settings.tray_execute_dr.as_deref(), Some("!Refresh"));
+
+        let mut out = IniFile::new();
+        settings.apply_to_ini(&mut out);
+        assert_eq!(
+            out.get(RAINMETER_SECTION, "SelectedColor"),
+            Some("38BDF8FF")
+        );
+    }
+
+    #[test]
+    fn parses_tray_measure() {
+        let ini = IniFile::parse(
+            "[TrayMeasure]\nMeasure=CPU\nTrayMeter=histogram\nTrayColor1=FF000080\nTrayColor2=00FF00FF\nTrayBitmap=bar.png\nTrayBitmapFrames=10\n",
+        );
+        let measure = TrayMeasure::from_ini(&ini).unwrap();
+        assert_eq!(measure.measure, "CPU");
+        assert_eq!(measure.tray_meter, "HISTOGRAM");
+        assert_eq!(measure.tray_color1.r, 255);
+        assert_eq!(measure.tray_color1.a, 128);
+        assert_eq!(measure.tray_bitmap.as_deref(), Some("bar.png"));
+        assert_eq!(measure.tray_bitmap_frames, 10);
+    }
+
+    #[test]
+    fn ignores_empty_tray_measure() {
+        let ini = IniFile::parse("[TrayMeasure]\nTrayMeter=BITMAP\n");
+        assert!(TrayMeasure::from_ini(&ini).is_none());
     }
 
     #[test]
