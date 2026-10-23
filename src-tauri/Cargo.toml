@@ -24,6 +24,7 @@ raw-window-handle = "0.6"
 serde.workspace = true
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+base64 = "0.22"
 serde_json.workspace = true
 petrichor-core.workspace = true
 petrichor-sys.workspace = true

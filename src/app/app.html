@@ -676,164 +676,59 @@
   </section>
   } @case ('packages') {
   <section class="panel">
-    <div class="panel-head"><h2>Paquets</h2></div>
-
-    <fieldset>
-      <legend>Installer un paquet</legend>
-      <div class="inline-form">
-        <input
-          type="text"
-          placeholder="/chemin/vers/paquet.zip"
-          [value]="packagePath()"
-          (input)="packagePath.set(inputValue($event))"
-        />
-        <button type="button" (click)="inspectPackage()">Inspecter</button>
-      </div>
-      @if (packageInfo(); as info) {
-      <div class="package-info">
-        <strong>{{ info.metadata.name || 'Paquet sans nom' }}</strong>
-        <span>{{ info.metadata.author || 'auteur inconnu' }}</span>
-        <span>version {{ info.metadata.version || '—' }}</span>
-        <span>{{ info.files }} fichiers · {{ formatBytes(info.bytes) }}</span>
-      </div>
-      <div class="checks">
-        @for (entry of componentEntries(); track entry[0]) {
-        <label>
-          <input
-            type="checkbox"
-            [checked]="selectedComponents().includes(entry[0])"
-            (change)="toggleComponent(entry[0])"
-          />
-          {{ entry[0] }} ({{ entry[1] }})
-        </label>
-        }
-      </div>
-      <div class="checks">
-        <label
-          ><input
-            type="checkbox"
-            [checked]="packageMerge()"
-            (change)="packageMerge.set(checked($event))"
-          />
-          Fusionner</label
+    <div class="panel-head">
+      <h2>Paquets</h2>
+      <div class="toolbar">
+        <button type="button" (click)="openPackageDialog('install')">
+          Installer un paquet
+        </button>
+        <button
+          type="button"
+          class="secondary"
+          (click)="openPackageDialog('create')"
         >
-        <label
-          ><input
-            type="checkbox"
-            [checked]="preserveVariables()"
-            (change)="preserveVariables.set(checked($event))"
-          />
-          Conserver les variables utilisateur</label
-        >
+          Créer un paquet
+        </button>
       </div>
-      <div class="actions">
-        <button type="button" (click)="installPackage()">Installer</button>
-      </div>
-      @if (packageProgress(); as progress) { @if (progress.phase === 'install')
-      {
-      <p class="muted">
-        Installation : {{ progress.current }}/{{ progress.total }} — {{
-        progress.message }}
-      </p>
-      } } @if (installResult(); as result) {
-      <p class="muted">
-        Composants installés : {{ result.installed.join(', ') }} · {{
-        result.files }} fichiers
-      </p>
-      @if (result.layout_loaded) {
-      <p class="muted">Layout chargé : {{ result.layout_loaded }}</p>
-      } @for (warning of result.warnings; track warning) {
-      <p class="notice error">{{ warning }}</p>
-      } } }
-    </fieldset>
-
-    <fieldset>
-      <legend>Créer un paquet</legend>
-      <div class="fields">
-        <label>
-          Dossier de skin
-          <select
-            [value]="packageForm.source"
-            (change)="choosePackageSource(inputValue($event))"
-          >
-            @for (folder of state.skins.folders; track folder.path) {
-            <option [value]="folder.path">{{ folder.name }}</option>
-            }
-          </select>
-        </label>
-        <label
-          >Fichier de sortie
-          <input type="text" [(ngModel)]="packageForm.output"
-        /></label>
-        <label>Nom <input type="text" [(ngModel)]="packageForm.name" /></label>
-        <label
-          >Auteur <input type="text" [(ngModel)]="packageForm.author"
-        /></label>
-        <label
-          >Version <input type="text" [(ngModel)]="packageForm.version"
-        /></label>
-        <label
-          >Bannière (image)
-          <input
-            type="text"
-            [(ngModel)]="packageForm.banner"
-            placeholder="/chemin/banner.png"
-        /></label>
-        <label
-          >Fichiers de variables
-          <input
-            type="text"
-            [(ngModel)]="variableText"
-            placeholder="Variables.inc, UserVariables.inc"
-        /></label>
-        <label>
-          Layout à charger
-          <select [(ngModel)]="packageForm.load">
-            <option value="">Aucun</option>
-            @for (layout of state.layouts; track layout.name) {
-            <option [value]="layout.name">{{ layout.name }}</option>
-            }
-          </select>
-        </label>
-      </div>
-      <div class="checks">
-        @for (layout of state.layouts; track layout.name) {
-        <label>
-          <input
-            type="checkbox"
-            [checked]="hasPackageLayout(layout.name)"
-            (change)="togglePackageLayout(layout.name)"
-          />
-          Inclure {{ layout.name }}
-        </label>
-        }
-        <label
-          ><input type="checkbox" [(ngModel)]="packageForm.include_plugins" />
-          Inclure les plugins</label
+    </div>
+    <p class="muted">
+      Installez une archive Petrichor ou préparez un paquet depuis un skin
+      existant.
+    </p>
+    <div class="package-actions">
+      <article class="package-action">
+        <h3>Installer</h3>
+        <p>
+          Vérifie l'enveloppe, la clé SHA-256 et les composants avant
+          extraction.
+        </p>
+        <button type="button" (click)="openPackageDialog('install')">
+          Ouvrir l'installateur
+        </button>
+      </article>
+      <article class="package-action">
+        <h3>Créer</h3>
+        <p>
+          Composez un paquet avec métadonnées, layouts, variables, polices et
+          addons.
+        </p>
+        <button
+          type="button"
+          class="secondary"
+          (click)="openPackageDialog('create')"
         >
-        <label
-          ><input type="checkbox" [(ngModel)]="packageForm.include_fonts" />
-          Inclure les polices</label
-        >
-        <label
-          ><input type="checkbox" [(ngModel)]="packageForm.include_addons" />
-          Inclure les addons</label
-        >
-        <label
-          ><input type="checkbox" [(ngModel)]="packageForm.merge_skins" />
-          Fusion par défaut</label
-        >
-      </div>
-      <div class="actions">
-        <button type="button" (click)="createPackage()">Créer le paquet</button>
-      </div>
-      @if (packageProgress(); as progress) {
-      <p class="muted">
-        {{ progress.phase === 'create' ? 'Création' : 'Installation' }} : {{
-        progress.current }}/{{ progress.total }} — {{ progress.message }}
-      </p>
-      }
-    </fieldset>
+          Ouvrir le créateur
+        </button>
+      </article>
+    </div>
+    @if (installResult(); as result) {
+    <p class="muted">
+      Dernière installation : {{ result.installed.join(', ') }} · {{
+      result.files }} fichiers
+    </p>
+    } @if (packagePath()) {
+    <p class="muted path">Dernier paquet : {{ packagePath() }}</p>
+    }
   </section>
   } }
 
@@ -912,6 +807,245 @@
     <div class="actions">
       <button type="button" (click)="closeAbout()">Fermer</button>
     </div>
+  </section>
+</div>
+} @if (packageDialog() === 'install') {
+<div class="overlay" (click)="closePackageDialog()">
+  <section class="about package-dialog" (click)="$event.stopPropagation()">
+    <header class="dialog-head">
+      <h2>Installer un paquet</h2>
+      <button
+        type="button"
+        class="secondary small"
+        (click)="closePackageDialog()"
+      >
+        Fermer
+      </button>
+    </header>
+    <div class="inline-form">
+      <input
+        type="text"
+        placeholder="/chemin/vers/paquet.zip"
+        [value]="packagePath()"
+        (input)="packagePath.set(inputValue($event))"
+      />
+      <button type="button" (click)="inspectPackage()">Inspecter</button>
+    </div>
+    @if (packageInfo(); as info) { @if (info.banner_data) {
+    <img
+      class="package-banner"
+      [src]="info.banner_data"
+      alt="Bannière du paquet"
+    />
+    }
+    <div class="package-info">
+      <strong>{{ info.metadata.name || 'Paquet sans nom' }}</strong>
+      <span>{{ info.metadata.author || 'auteur inconnu' }}</span>
+      <span>version {{ info.metadata.version || '—' }}</span>
+      <span>{{ info.files }} fichiers · {{ formatBytes(info.bytes) }}</span>
+    </div>
+    @if (info.metadata.minimum_petrichor) {
+    <p class="muted">
+      Requiert Petrichor {{ info.metadata.minimum_petrichor }} ou supérieur.
+    </p>
+    } @if (info.metadata.variable_files.length) {
+    <p class="muted">
+      Variables préservées : {{ info.metadata.variable_files.join(', ') }}
+    </p>
+    }
+    <div class="checks">
+      @for (entry of componentEntries(); track entry[0]) {
+      <label>
+        <input
+          type="checkbox"
+          [checked]="selectedComponents().includes(entry[0])"
+          (change)="toggleComponent(entry[0])"
+        />
+        {{ entry[0] }} ({{ entry[1] }})
+      </label>
+      }
+    </div>
+    <div class="checks">
+      <label
+        ><input
+          type="checkbox"
+          [checked]="packageMerge()"
+          (change)="packageMerge.set(checked($event))"
+        />
+        Fusionner</label
+      >
+      <label
+        ><input
+          type="checkbox"
+          [checked]="preserveVariables()"
+          (change)="preserveVariables.set(checked($event))"
+        />
+        Conserver les variables utilisateur</label
+      >
+    </div>
+    @if (!packageMerge()) {
+    <p class="muted">
+      Sans fusion, le skin existant est sauvegardé dans
+      <code>Skins/@Backup</code> avant remplacement.
+    </p>
+    }
+    <div class="actions">
+      <button type="button" (click)="installPackage()">Installer</button>
+      <button type="button" class="secondary" (click)="closePackageDialog()">
+        Annuler
+      </button>
+    </div>
+    @if (packageProgress(); as progress) { @if (progress.phase === 'install') {
+    <p class="muted">
+      Installation : {{ progress.current }}/{{ progress.total }} — {{
+      progress.message }}
+    </p>
+    } } @if (installResult(); as result) {
+    <p class="muted">
+      Composants installés : {{ result.installed.join(', ') }} · {{ result.files
+      }} fichiers
+    </p>
+    @if (result.layout_loaded) {
+    <p class="muted">Layout chargé : {{ result.layout_loaded }}</p>
+    } @for (warning of result.warnings; track warning) {
+    <p class="notice error">{{ warning }}</p>
+    } } }
+  </section>
+</div>
+} @if (packageDialog() === 'create') {
+<div class="overlay" (click)="closePackageDialog()">
+  <section class="about package-dialog" (click)="$event.stopPropagation()">
+    <header class="dialog-head">
+      <h2>Créer un paquet</h2>
+      <button
+        type="button"
+        class="secondary small"
+        (click)="closePackageDialog()"
+      >
+        Fermer
+      </button>
+    </header>
+    <nav class="dialog-tabs" aria-label="Création de paquet">
+      <button
+        type="button"
+        [class.active]="packageCreateTab() === 'info'"
+        (click)="setPackageCreateTab('info')"
+      >
+        Info
+      </button>
+      <button
+        type="button"
+        [class.active]="packageCreateTab() === 'options'"
+        (click)="setPackageCreateTab('options')"
+      >
+        Options
+      </button>
+      <button
+        type="button"
+        [class.active]="packageCreateTab() === 'advanced'"
+        (click)="setPackageCreateTab('advanced')"
+      >
+        Avancé
+      </button>
+    </nav>
+    @switch (packageCreateTab()) { @case ('info') {
+    <div class="fields">
+      <label>
+        Dossier de skin
+        <select
+          [value]="packageForm.source"
+          (change)="choosePackageSource(inputValue($event))"
+        >
+          @for (folder of packageFolders(); track folder.path) {
+          <option [value]="folder.path">{{ folder.name }}</option>
+          }
+        </select>
+      </label>
+      <label
+        >Fichier de sortie <input type="text" [(ngModel)]="packageForm.output"
+      /></label>
+      <label>Nom <input type="text" [(ngModel)]="packageForm.name" /></label>
+      <label
+        >Auteur <input type="text" [(ngModel)]="packageForm.author"
+      /></label>
+      <label
+        >Version <input type="text" [(ngModel)]="packageForm.version"
+      /></label>
+      <label
+        >Bannière (image)
+        <input
+          type="text"
+          [(ngModel)]="packageForm.banner"
+          placeholder="/chemin/banner.png"
+      /></label>
+    </div>
+    } @case ('options') {
+    <div class="fields">
+      <label>
+        Layout à charger
+        <select [(ngModel)]="packageForm.load">
+          <option value="">Aucun</option>
+          @for (layout of packageLayouts(); track layout.name) {
+          <option [value]="layout.name">{{ layout.name }}</option>
+          }
+        </select>
+      </label>
+      <label
+        >Fichiers de variables
+        <input
+          type="text"
+          [(ngModel)]="variableText"
+          placeholder="Variables.inc, UserVariables.inc"
+      /></label>
+    </div>
+    <div class="checks">
+      @for (layout of packageLayouts(); track layout.name) {
+      <label>
+        <input
+          type="checkbox"
+          [checked]="hasPackageLayout(layout.name)"
+          (change)="togglePackageLayout(layout.name)"
+        />
+        Inclure {{ layout.name }}
+      </label>
+      }
+      <label
+        ><input type="checkbox" [(ngModel)]="packageForm.merge_skins" /> Fusion
+        par défaut</label
+      >
+    </div>
+    } @case ('advanced') {
+    <div class="checks">
+      <label
+        ><input type="checkbox" [(ngModel)]="packageForm.include_plugins" />
+        Inclure les plugins</label
+      >
+      <label
+        ><input type="checkbox" [(ngModel)]="packageForm.include_fonts" />
+        Inclure les polices</label
+      >
+      <label
+        ><input type="checkbox" [(ngModel)]="packageForm.include_addons" />
+        Inclure les addons</label
+      >
+    </div>
+    <p class="muted">
+      Le paquet inclut une enveloppe de validation SHA-256. Les noms non-ASCII
+      sont conservés.
+    </p>
+    } }
+    <div class="actions">
+      <button type="button" (click)="createPackage()">Créer le paquet</button>
+      <button type="button" class="secondary" (click)="closePackageDialog()">
+        Annuler
+      </button>
+    </div>
+    @if (packageProgress(); as progress) { @if (progress.phase === 'create') {
+    <p class="muted">
+      Création : {{ progress.current }}/{{ progress.total }} — {{
+      progress.message }}
+    </p>
+    } }
   </section>
 </div>
 }

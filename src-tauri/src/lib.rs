@@ -127,6 +127,11 @@ pub fn run() {
                 tray::handle_menu_event(app, &event);
                 menu::handle_event(app, &event);
             });
+            if let Err(error) = persistence::ensure_config() {
+                petrichor_core::logging::warning(format!(
+                    "Création de la configuration impossible : {error}"
+                ));
+            }
             if let Err(error) = tray::setup(app.handle()) {
                 petrichor_core::logging::warning(format!("Icône de tray indisponible : {error}"));
             } else {

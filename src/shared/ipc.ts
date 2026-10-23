@@ -688,6 +688,7 @@ export interface PackageInfo {
   components: Record<string, number>;
   files: number;
   bytes: number;
+  banner_data: string | null;
 }
 
 export interface CreatePackageSpec {

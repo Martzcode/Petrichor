@@ -27,6 +27,8 @@ import {
 } from '../shared/ipc';
 
 type Tab = 'skins' | 'layouts' | 'game' | 'settings' | 'packages';
+type PackageDialog = 'install' | 'create';
+type PackageCreateTab = 'info' | 'options' | 'advanced';
 
 @Component({
   selector: 'app-root',
@@ -53,6 +55,8 @@ export class App implements OnInit {
   protected readonly includeWallpaper = signal(false);
   protected readonly showNewSkin = signal(false);
   protected readonly packageInfo = signal<PackageInfo | null>(null);
+  protected readonly packageDialog = signal<PackageDialog | null>(null);
+  protected readonly packageCreateTab = signal<PackageCreateTab>('info');
   protected readonly packageProgress = signal<PackageProgress | null>(null);
   protected readonly packagePath = signal('');
   protected readonly selectedComponents = signal<string[]>([]);
@@ -167,6 +171,8 @@ export class App implements OnInit {
     this.packageForm.name = name;
     this.packageForm.output = `${name}.zip`;
     this.tab.set('packages');
+    this.packageCreateTab.set('info');
+    this.packageDialog.set('create');
     this.notice.set(`Paquet préparé depuis « ${name} »`);
   }
 
@@ -378,15 +384,19 @@ export class App implements OnInit {
   }
 
   protected async inspectPackage(): Promise<void> {
-    await this.run('Inspection du paquet', async () => {
-      const info = await this.ipc.inspectPackage(this.packagePath());
-      if (!info) throw new Error('Paquet illisible.');
-      this.packageInfo.set(info);
-      this.selectedComponents.set(Object.keys(info.components));
-      this.packageMerge.set(info.metadata.merge_skins);
-      this.variableText = info.metadata.variable_files.join(', ');
-      this.installResult.set(null);
-    });
+    await this.run('Inspection du paquet', () =>
+      this.loadPackageInfo(this.packagePath()),
+    );
+  }
+
+  private async loadPackageInfo(path: string): Promise<void> {
+    const info = await this.ipc.inspectPackage(path);
+    if (!info) throw new Error('Paquet illisible.');
+    this.packageInfo.set(info);
+    this.selectedComponents.set(Object.keys(info.components));
+    this.packageMerge.set(info.metadata.merge_skins);
+    this.variableText = info.metadata.variable_files.join(', ');
+    this.installResult.set(null);
   }
 
   protected toggleComponent(component: string): void {
@@ -426,11 +436,43 @@ export class App implements OnInit {
       const result = await this.ipc.createPackage(this.packageForm);
       if (!result) throw new Error('Création impossible.');
       this.packagePath.set(result.path);
+      await this.loadPackageInfo(result.path);
+      this.packageDialog.set('install');
       this.notice.set(
         `Paquet créé : ${result.path} (${result.files} fichiers)`,
       );
-      await this.inspectPackage();
     });
+  }
+
+  protected openPackageDialog(dialog: PackageDialog): void {
+    if (dialog === 'create') {
+      const folders = this.packageFolders();
+      if (
+        folders.length > 0 &&
+        !folders.some((folder) => folder.path === this.packageForm.source)
+      ) {
+        this.choosePackageSource(folders[0].path);
+      }
+      this.packageCreateTab.set('info');
+    }
+    this.error.set(null);
+    this.packageDialog.set(dialog);
+  }
+
+  protected closePackageDialog(): void {
+    this.packageDialog.set(null);
+  }
+
+  protected setPackageCreateTab(tab: PackageCreateTab): void {
+    this.packageCreateTab.set(tab);
+  }
+
+  protected packageFolders(): SkinFolder[] {
+    return this.snapshot()?.skins.folders ?? [];
+  }
+
+  protected packageLayouts(): LayoutInfo[] {
+    return this.snapshot()?.layouts ?? [];
   }
 
   protected choosePackageSource(path: string): void {

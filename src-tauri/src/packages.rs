@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
-use petrichor_core::IniFile;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use petrichor_core::{Encoding, IniFile};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{Emitter, Manager};
@@ -11,6 +12,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::commands;
 use crate::layouts;
+use crate::updates;
 use crate::windows::SkinWindows;
 
 const METADATA_FILE: &str = "Package.ini";
@@ -50,6 +52,7 @@ pub struct PackageInfo {
     pub components: BTreeMap<String, usize>,
     pub files: usize,
     pub bytes: u64,
+    pub banner_data: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -230,13 +233,51 @@ fn inspect(path: &Path) -> Result<PackageInfo, String> {
             "aucun composant Skins/Layouts/Plugins/Fonts/Addons dans le paquet".to_string(),
         );
     }
+    let banner_data = if metadata.banner.trim().is_empty() {
+        None
+    } else {
+        let banner_name = metadata.banner.trim();
+        let banner_index = (0..archive.len()).find(|index| {
+            archive.by_index(*index).is_ok_and(|entry| {
+                !entry.is_dir() && entry.name().eq_ignore_ascii_case(banner_name)
+            })
+        });
+        banner_index.and_then(|index| {
+            let mut entry = archive.by_index(index).ok()?;
+            if entry.size() > 8 * 1024 * 1024 {
+                return None;
+            }
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data).ok()?;
+            let mime = image_mime(banner_name);
+            Some(format!("data:{mime};base64,{}", BASE64.encode(data)))
+        })
+    };
     Ok(PackageInfo {
         path: path.to_path_buf(),
         metadata,
         files: components.values().sum(),
         bytes,
         components,
+        banner_data,
     })
+}
+
+fn image_mime(name: &str) -> &'static str {
+    match Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        _ => "image/png",
+    }
 }
 
 fn create(
@@ -321,18 +362,28 @@ fn create(
         return Err("aucun fichier de skin à empaqueter".to_string());
     }
 
+    let mut variable_files = spec
+        .variable_files
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if variable_files.is_empty() {
+        let prefix = format!("Skins/{skin_folder}/");
+        variable_files = files
+            .iter()
+            .filter_map(|(target, _)| target.strip_prefix(&prefix))
+            .filter(|target| target.to_lowercase().ends_with(".inc"))
+            .map(str::to_string)
+            .collect();
+    }
     let metadata = PackageMetadata {
         name: spec.name.trim().to_string(),
         author: spec.author.trim().to_string(),
         version: spec.version.trim().to_string(),
         load: spec.load.trim().to_string(),
         merge_skins: spec.merge_skins,
-        variable_files: spec
-            .variable_files
-            .iter()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .collect(),
+        variable_files,
         minimum_petrichor: petrichor_core::version().to_string(),
         banner,
     };
@@ -404,6 +455,7 @@ fn install(
     app: Option<&tauri::AppHandle>,
 ) -> Result<InstallResult, String> {
     let info = inspect(path)?;
+    check_minimum_version(&info.metadata)?;
     let selected: BTreeSet<String> = match components {
         Some(values) if !values.is_empty() => values
             .iter()
@@ -446,16 +498,16 @@ fn install(
         if remainder.as_os_str().is_empty() {
             continue;
         }
+        if component == "Skins" && is_reserved_skin_path(&remainder) {
+            return Err("le dossier Skins/@Backup est réservé aux sauvegardes".to_string());
+        }
         let target = root.join(&remainder);
-        let existing = if preserve_variables
-            && target
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("ini"))
-        {
-            std::fs::read(&target).ok()
-        } else {
-            None
-        };
+        let existing =
+            if preserve_variables && preserves_variables(&raw_name, &target, &info.metadata) {
+                std::fs::read(&target).ok()
+            } else {
+                None
+            };
 
         if !merge {
             let replace_root = if component == "Skins" || component == "Layouts" {
@@ -469,6 +521,9 @@ fn install(
             if let Some(replace_root) = replace_root {
                 if replaced.insert(replace_root.clone()) && replace_root.exists() {
                     if replace_root.is_dir() {
+                        if component == "Skins" {
+                            backup_skin(&replace_root, &roots.skins)?;
+                        }
                         std::fs::remove_dir_all(&replace_root)
                             .map_err(|error| error.to_string())?;
                     } else {
@@ -500,6 +555,54 @@ fn install(
     })
 }
 
+fn is_reserved_skin_path(path: &Path) -> bool {
+    path.components().next().is_some_and(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("@Backup")
+    })
+}
+
+fn backup_skin(source: &Path, skins_root: &Path) -> Result<(), String> {
+    let Some(name) = source.file_name() else {
+        return Ok(());
+    };
+    if name.to_string_lossy().eq_ignore_ascii_case("@Backup") {
+        return Ok(());
+    }
+    let backup = skins_root.join("@Backup").join(name);
+    if backup.exists() {
+        if backup.is_dir() {
+            std::fs::remove_dir_all(&backup).map_err(|error| error.to_string())?;
+        } else {
+            std::fs::remove_file(&backup).map_err(|error| error.to_string())?;
+        }
+    }
+    copy_directory(source, &backup)
+}
+
+fn copy_directory(source: &Path, target: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(target).map_err(|error| error.to_string())?;
+    for entry in std::fs::read_dir(source)
+        .map_err(|error| error.to_string())?
+        .flatten()
+    {
+        let path = entry.path();
+        let destination = target.join(entry.file_name());
+        let metadata = std::fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            copy_directory(&path, &destination)?;
+        } else if metadata.is_file() {
+            std::fs::copy(&path, &destination).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 fn write_atomic(target: &Path, content: &[u8]) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -515,18 +618,58 @@ fn write_atomic(target: &Path, content: &[u8]) -> Result<(), String> {
     std::fs::rename(&temporary, target).map_err(|error| error.to_string())
 }
 
+fn check_minimum_version(metadata: &PackageMetadata) -> Result<(), String> {
+    let required = metadata.minimum_petrichor.trim();
+    if required.is_empty() {
+        return Ok(());
+    }
+    if updates::is_newer(required, petrichor_core::version()) {
+        return Err(format!(
+            "ce paquet requiert Petrichor {required} ou supérieur (version actuelle : {})",
+            petrichor_core::version()
+        ));
+    }
+    Ok(())
+}
+
+fn preserves_variables(raw_name: &str, target: &Path, metadata: &PackageMetadata) -> bool {
+    if metadata.variable_files.is_empty() {
+        return target.extension().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("ini") || extension.eq_ignore_ascii_case("inc")
+        });
+    }
+    let archive_name = normalize_variable_file(raw_name);
+    let target_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    metadata.variable_files.iter().any(|pattern| {
+        let pattern = normalize_variable_file(pattern);
+        !pattern.is_empty()
+            && (archive_name == pattern
+                || archive_name.ends_with(&format!("/{pattern}"))
+                || target_name == pattern)
+    })
+}
+
+fn normalize_variable_file(value: &str) -> String {
+    value
+        .trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .trim_start_matches('/')
+        .to_lowercase()
+}
+
 fn merge_variables(existing: &[u8], incoming: &[u8]) -> Vec<u8> {
-    let Ok(existing) = std::str::from_utf8(existing) else {
-        return incoming.to_vec();
-    };
-    let existing = IniFile::parse(existing);
+    let encoding = Encoding::detect(existing);
+    let existing = encoding.decode(existing);
+    let existing = IniFile::parse(&existing);
     let Some(variables) = existing.section("Variables") else {
         return incoming.to_vec();
     };
-    let Ok(text) = std::str::from_utf8(incoming) else {
-        return incoming.to_vec();
-    };
-    let mut merged = IniFile::parse(text);
+    let incoming = Encoding::detect(incoming).decode(incoming);
+    let mut merged = IniFile::parse(&incoming);
     for (key, value) in variables.iter() {
         merged.set("Variables", key, value);
     }
@@ -614,7 +757,7 @@ fn metadata_from_ini(ini: &IniFile) -> PackageMetadata {
             .map(|value| matches!(value.trim(), "1" | "true" | "TRUE"))
             .unwrap_or(true),
         variable_files: get(options, "VariableFiles")
-            .split('|')
+            .split(['|', ';'])
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string)
@@ -787,6 +930,199 @@ mod tests {
     }
 
     #[test]
+    fn creates_non_ascii_banner_and_variable_package() {
+        let base = temp("unicode");
+        let skin = base.join("Skins").join("Horloge Été");
+        std::fs::create_dir_all(&skin).unwrap();
+        std::fs::write(
+            skin.join("Horloge Été.ini"),
+            "[Variables]\nColor=0,0,0\n[MeterTime]\nMeter=String\n",
+        )
+        .unwrap();
+        std::fs::write(skin.join("Variables.inc"), "[Variables]\nColor=0,0,0\n").unwrap();
+        std::fs::write(skin.join("Theme.inc"), "[Variables]\nTheme=dark\n").unwrap();
+        let banner = base.join("banner.png");
+        std::fs::write(&banner, b"\x89PNG\r\n\x1a\n").unwrap();
+        let archive = base.join("Horloge.zip");
+        let spec = CreatePackageSpec {
+            source: skin.to_string_lossy().to_string(),
+            output: archive.to_string_lossy().to_string(),
+            name: "Horloge Été".to_string(),
+            author: "Alice".to_string(),
+            version: "1.0".to_string(),
+            load: String::new(),
+            layouts: Vec::new(),
+            include_plugins: false,
+            merge_skins: true,
+            variable_files: vec!["Variables.inc".to_string()],
+            banner: Some(banner.to_string_lossy().to_string()),
+            include_fonts: false,
+            include_addons: false,
+        };
+        create(&spec, None).unwrap();
+        let info = inspect(&archive).unwrap();
+        assert_eq!(info.metadata.name, "Horloge Été");
+        assert_eq!(info.metadata.variable_files, ["Variables.inc"]);
+        assert!(info
+            .banner_data
+            .as_deref()
+            .is_some_and(|data| data.starts_with("data:image/png;base64,")));
+
+        let install_root = temp("unicode-install");
+        let target = roots(&install_root);
+        let existing_skin = target.skins.join("Horloge Été");
+        std::fs::create_dir_all(&existing_skin).unwrap();
+        std::fs::write(
+            existing_skin.join("Horloge Été.ini"),
+            "[Variables]\nColor=9,9,9\n",
+        )
+        .unwrap();
+        std::fs::write(
+            existing_skin.join("Variables.inc"),
+            "[Variables]\nColor=1,2,3\n",
+        )
+        .unwrap();
+        std::fs::write(
+            existing_skin.join("Theme.inc"),
+            "[Variables]\nTheme=light\n",
+        )
+        .unwrap();
+        install(&archive, &target, None, true, true, None).unwrap();
+        let ini = std::fs::read_to_string(existing_skin.join("Horloge Été.ini")).unwrap();
+        let variables = std::fs::read_to_string(existing_skin.join("Variables.inc")).unwrap();
+        let theme = std::fs::read_to_string(existing_skin.join("Theme.inc")).unwrap();
+        assert!(ini.contains("Color=0,0,0"));
+        assert!(variables.contains("Color=1,2,3"));
+        assert!(theme.contains("Theme=dark"));
+
+        std::fs::remove_dir_all(base).ok();
+        std::fs::remove_dir_all(install_root).ok();
+    }
+
+    #[test]
+    fn detects_variable_files_in_skin() {
+        let directory = temp("detect-variables");
+        let skin = directory.join("Skin");
+        std::fs::create_dir_all(&skin).unwrap();
+        std::fs::write(skin.join("Skin.ini"), "[Meter]\nMeter=String\n").unwrap();
+        std::fs::write(skin.join("Variables.inc"), "[Variables]\nColor=1,2,3\n").unwrap();
+        let archive = directory.join("Skin.zip");
+        let spec = CreatePackageSpec {
+            source: skin.to_string_lossy().to_string(),
+            output: archive.to_string_lossy().to_string(),
+            name: "Skin".to_string(),
+            author: String::new(),
+            version: String::new(),
+            load: String::new(),
+            layouts: Vec::new(),
+            include_plugins: false,
+            merge_skins: true,
+            variable_files: Vec::new(),
+            banner: None,
+            include_fonts: false,
+            include_addons: false,
+        };
+        create(&spec, None).unwrap();
+        let info = inspect(&archive).unwrap();
+        assert_eq!(info.metadata.variable_files, ["Variables.inc"]);
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn accepts_legacy_plain_zip() {
+        let directory = temp("legacy");
+        let skin = directory.join("Skin");
+        std::fs::create_dir_all(&skin).unwrap();
+        std::fs::write(skin.join("Skin.ini"), "[Meter]\nMeter=String\n").unwrap();
+        let archive = directory.join("Skin.zip");
+        let spec = CreatePackageSpec {
+            source: skin.to_string_lossy().to_string(),
+            output: archive.to_string_lossy().to_string(),
+            name: "Skin".to_string(),
+            author: String::new(),
+            version: String::new(),
+            load: String::new(),
+            layouts: Vec::new(),
+            include_plugins: false,
+            merge_skins: true,
+            variable_files: Vec::new(),
+            banner: None,
+            include_fonts: false,
+            include_addons: false,
+        };
+        create(&spec, None).unwrap();
+        let raw = std::fs::read(&archive).unwrap();
+        let data = unwrap_package(&raw).unwrap();
+        std::fs::write(&archive, data).unwrap();
+        let info = inspect(&archive).unwrap();
+        assert_eq!(info.metadata.name, "Skin");
+        assert_eq!(info.components.get("Skins"), Some(&1));
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn preserves_variables_in_utf16() {
+        let incoming = "[Variables]\nColor=0,0,0\n[Meter]\nMeter=String\n";
+        let mut existing = vec![0xFF, 0xFE];
+        for unit in "[Variables]\nColor=1,2,3\n".encode_utf16() {
+            existing.extend_from_slice(&unit.to_le_bytes());
+        }
+        let merged = String::from_utf8(merge_variables(&existing, incoming.as_bytes())).unwrap();
+        assert!(merged.contains("Color=1,2,3"));
+    }
+
+    #[test]
+    fn rejects_package_requiring_newer_version() {
+        let metadata = PackageMetadata {
+            minimum_petrichor: "99.0.0".to_string(),
+            ..PackageMetadata::default()
+        };
+        assert!(check_minimum_version(&metadata).is_err());
+    }
+
+    #[test]
+    fn backs_up_replaced_skins() {
+        let base = temp("backup");
+        let skin = base.join("Skins").join("Clock");
+        std::fs::create_dir_all(&skin).unwrap();
+        std::fs::write(skin.join("Clock.ini"), "[Meter]\nMeter=String\n").unwrap();
+        let archive = base.join("Clock.zip");
+        let spec = CreatePackageSpec {
+            source: skin.to_string_lossy().to_string(),
+            output: archive.to_string_lossy().to_string(),
+            name: "Clock".to_string(),
+            author: String::new(),
+            version: String::new(),
+            load: String::new(),
+            layouts: Vec::new(),
+            include_plugins: false,
+            merge_skins: true,
+            variable_files: Vec::new(),
+            banner: None,
+            include_fonts: false,
+            include_addons: false,
+        };
+        create(&spec, None).unwrap();
+
+        let install_root = temp("backup-install");
+        let target = roots(&install_root);
+        let existing = target.skins.join("Clock");
+        std::fs::create_dir_all(&existing).unwrap();
+        std::fs::write(existing.join("Clock.ini"), "[Meter]\nMeter=Old\n").unwrap();
+        install(&archive, &target, None, false, false, None).unwrap();
+        let backup = target.skins.join("@Backup/Clock/Clock.ini");
+        assert!(backup.is_file());
+        assert!(std::fs::read_to_string(backup)
+            .unwrap()
+            .contains("Meter=Old"));
+        assert!(std::fs::read_to_string(existing.join("Clock.ini"))
+            .unwrap()
+            .contains("Meter=String"));
+        std::fs::remove_dir_all(base).ok();
+        std::fs::remove_dir_all(install_root).ok();
+    }
+
+    #[test]
     fn rejects_tampered_envelope() {
         let directory = temp("envelope");
         let archive = directory.join("Clock.zip");
@@ -828,6 +1164,12 @@ mod tests {
         assert!(merged.contains("Color=1,2,3"));
         assert!(merged.contains("New=1"));
         std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn reserves_backup_skin_destination() {
+        assert!(is_reserved_skin_path(Path::new("@Backup/Clock/Clock.ini")));
+        assert!(!is_reserved_skin_path(Path::new("Clock/@Backup/data.inc")));
     }
 
     #[test]

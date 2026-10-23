@@ -143,6 +143,13 @@ fn collect_folders(dir: &Path, level: u16, out: &mut Vec<SkinFolder>) {
 
     for path in entries {
         if path.is_dir() {
+            if level == 1
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("@Backup"))
+            {
+                continue;
+            }
             out.push(build_folder(&path, level));
             collect_folders(&path, level + 1, out);
         }
@@ -233,6 +240,8 @@ mod tests {
         fs::create_dir_all(root.join("System/Monitor")).unwrap();
         fs::write(root.join("System/Monitor/CPU.ini"), "[S]\nMeasure=CPU\n").unwrap();
         fs::create_dir_all(root.join("Empty")).unwrap();
+        fs::create_dir_all(root.join("@Backup/Clock")).unwrap();
+        fs::write(root.join("@Backup/Clock/Clock.ini"), "[S]\nMeter=String\n").unwrap();
         fs::write(root.join("README.txt"), "ignore me").unwrap();
         dir
     }
@@ -262,6 +271,13 @@ mod tests {
         let clock = registry.folder_by_name("Clock").unwrap();
         let files: Vec<&str> = clock.files.iter().map(|f| f.filename.as_str()).collect();
         assert_eq!(files, vec!["Clock.ini", "ClockDark.ini"]);
+    }
+
+    #[test]
+    fn skips_backup_folder() {
+        let dir = fixture();
+        let registry = Registry::scan(dir.path());
+        assert!(registry.folder_by_name("@Backup").is_none());
     }
 
     #[test]

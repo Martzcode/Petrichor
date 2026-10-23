@@ -10,6 +10,17 @@ pub fn config_path() -> Option<PathBuf> {
     Some(base.join("Petrichor").join("Petrichor.ini"))
 }
 
+pub fn ensure_config() -> Result<PathBuf, String> {
+    let path =
+        config_path().ok_or_else(|| "répertoire de configuration introuvable".to_string())?;
+    if !path.is_file() {
+        ApplicationConfig::default()
+            .save(&path)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(path)
+}
+
 pub fn skin_key(path: &Path) -> String {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let parts: Vec<String> = canonical

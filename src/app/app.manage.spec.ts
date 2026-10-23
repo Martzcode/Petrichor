@@ -1,7 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { App } from './app';
-import { ManageSnapshot, PetrichorIpc } from '../shared/ipc';
+import { ManageSnapshot, PackageInfo, PetrichorIpc } from '../shared/ipc';
 
 const snapshot: ManageSnapshot = {
   version: '0.0.0-test',
@@ -69,6 +69,24 @@ const snapshot: ManageSnapshot = {
   monitors: [],
 };
 
+const packageInfo: PackageInfo = {
+  path: '/tmp/package.zip',
+  metadata: {
+    name: 'Horloge Été',
+    author: 'Alice',
+    version: '1.0',
+    load: '',
+    merge_skins: true,
+    variable_files: ['Variables.inc'],
+    minimum_petrichor: '0.1.0',
+    banner: 'Banner.png',
+  },
+  components: { Skins: 2 },
+  files: 2,
+  bytes: 512,
+  banner_data: 'data:image/png;base64,iVBORw0KGgo=',
+};
+
 function fakeIpc() {
   const backend = signal(true);
   const logs = signal([]);
@@ -82,6 +100,7 @@ function fakeIpc() {
     onLog: async () => undefined,
     onPackageProgress: async () => undefined,
     manageSnapshot: async () => snapshot,
+    inspectPackage: async () => packageInfo,
   };
 }
 
@@ -108,6 +127,69 @@ describe('Manage UI', () => {
     buttons.find((button) => button.textContent?.trim() === 'Paquets')?.click();
     fixture.detectChanges();
     expect(element.textContent).toContain('Installer un paquet');
+    expect(element.textContent).toContain('Ouvrir le créateur');
+
+    const install = Array.from(
+      element.querySelectorAll<HTMLButtonElement>('.package-actions button'),
+    ).find((button) => button.textContent?.includes('installateur'));
+    install?.click();
+    fixture.detectChanges();
+    expect(element.querySelector('.package-dialog')).toBeTruthy();
+
+    const input = element.querySelector<HTMLInputElement>(
+      '.package-dialog input[type="text"]',
+    );
+    input!.value = '/tmp/package.zip';
+    input!.dispatchEvent(new Event('input'));
+    const inspect = Array.from(
+      element.querySelectorAll<HTMLButtonElement>('.package-dialog button'),
+    ).find((button) => button.textContent?.trim() === 'Inspecter');
+    inspect?.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(element.querySelector('img.package-banner')).toBeTruthy();
+    expect(element.textContent).toContain('Variables.inc');
+    expect(element.textContent).toContain('Horloge Été');
+  });
+
+  it('opens the package creator with Info, Options and Advanced tabs', async () => {
+    TestBed.configureTestingModule({
+      imports: [App],
+      providers: [{ provide: PetrichorIpc, useValue: fakeIpc() }],
+    });
+    const fixture = TestBed.createComponent(App);
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+
+    const tabs = Array.from(
+      element.querySelectorAll<HTMLButtonElement>('.tabs button'),
+    );
+    tabs.find((button) => button.textContent?.trim() === 'Paquets')?.click();
+    fixture.detectChanges();
+
+    const create = Array.from(
+      element.querySelectorAll<HTMLButtonElement>('.package-actions button'),
+    ).find((button) => button.textContent?.includes('créateur'));
+    create?.click();
+    fixture.detectChanges();
+    expect(element.textContent).toContain('Créer un paquet');
+    expect(element.querySelector('.dialog-tabs')).toBeTruthy();
+
+    const options = Array.from(
+      element.querySelectorAll<HTMLButtonElement>('.dialog-tabs button'),
+    ).find((button) => button.textContent?.trim() === 'Options');
+    options?.click();
+    fixture.detectChanges();
     expect(element.textContent).toContain('Fichiers de variables');
+    expect(element.textContent).toContain('Fusion par défaut');
+
+    const advanced = Array.from(
+      element.querySelectorAll<HTMLButtonElement>('.dialog-tabs button'),
+    ).find((button) => button.textContent?.trim() === 'Avancé');
+    advanced?.click();
+    fixture.detectChanges();
+    expect(element.textContent).toContain('Inclure les polices');
+    expect(element.textContent).toContain('enveloppe de validation SHA-256');
   });
 });

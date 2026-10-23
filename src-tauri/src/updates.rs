@@ -406,7 +406,7 @@ fn version_parts(version: &str) -> Vec<u64> {
         .collect()
 }
 
-fn is_newer(candidate: &str, current: &str) -> bool {
+pub(crate) fn is_newer(candidate: &str, current: &str) -> bool {
     let candidate = version_parts(candidate);
     let current = version_parts(current);
     for index in 0..candidate.len().max(current.len()) {

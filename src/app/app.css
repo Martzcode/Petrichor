@@ -580,6 +580,75 @@ fieldset label input:not([type="checkbox"]) {
   overflow-wrap: anywhere;
 }
 
+.package-dialog {
+  max-width: 760px;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.dialog-head h2 {
+  margin: 0;
+}
+
+.dialog-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 1rem 0;
+  border-bottom: 1px solid #2b3238;
+  padding-bottom: 0.5rem;
+}
+
+.dialog-tabs button {
+  background: transparent;
+  color: #9aa6b2;
+  border-color: transparent;
+}
+
+.dialog-tabs button.active {
+  color: #e7edf3;
+  border-color: #3e7cb1;
+  background: #20262c;
+}
+
+.package-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.package-action {
+  border: 1px solid #2b3238;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #181c21;
+}
+
+.package-action h3 {
+  margin-top: 0;
+}
+
+.package-action p {
+  color: #8b98a5;
+}
+
+.package-banner {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  margin: 0.75rem 0;
+  border-radius: 6px;
+  background: #11151a;
+}
+
 @media (max-width: 860px) {
   .split {
     grid-template-columns: 1fr;
