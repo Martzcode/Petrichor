@@ -85,8 +85,21 @@ pub fn default_skin_root() -> Option<String> {
 }
 
 pub(crate) fn skin_root() -> Option<PathBuf> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skins-demo");
-    path.is_dir().then_some(path)
+    if let Some(path) = std::env::var_os("PETRICHOR_SKINS") {
+        let path = PathBuf::from(path);
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+    let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../skins-demo");
+    if bundled.is_dir() {
+        return Some(bundled);
+    }
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .map(|base| base.join("Petrichor").join("Skins"))
+        .filter(|path| path.is_dir())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -152,7 +165,7 @@ pub fn load_render_model(path: String, store: tauri::State<'_, MeasureStore>) ->
     }
 }
 
-fn window_flags(path: &Path) -> WindowFlags {
+pub(crate) fn window_flags(path: &Path) -> WindowFlags {
     let defaults = WindowFlags {
         always_on_top: false,
         always_on_bottom: false,

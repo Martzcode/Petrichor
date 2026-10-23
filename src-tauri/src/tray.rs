@@ -8,9 +8,12 @@ use tauri::{AppHandle, Manager, Wry};
 use petrichor_core::{ApplicationConfig, Registry};
 
 use crate::commands;
+use crate::gamemode::{self, GameModeState};
 use crate::layouts;
 use crate::menu::MenuState;
+use crate::persistence;
 use crate::selection::SelectionState;
+use crate::storage;
 use crate::windows::{self, SkinWindows};
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
@@ -69,6 +72,9 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .checked(selection.is_active())
         .build(app)?;
     let logs = MenuItemBuilder::with_id("logs", "Journal").build(app)?;
+    let game_mode = CheckMenuItemBuilder::with_id("game-mode", "Game Mode")
+        .checked(app.state::<GameModeState>().is_active())
+        .build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quitter").build(app)?;
 
     let mut builder = MenuBuilder::new(app);
@@ -77,12 +83,43 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let layout_names = layouts::list();
     if !layout_names.is_empty() {
         let mut submenu = SubmenuBuilder::new(app, "Layouts");
-        for name in layout_names {
-            let item = MenuItemBuilder::with_id(format!("layout:{name}"), &name).build(app)?;
+        for name in &layout_names {
+            let item = MenuItemBuilder::with_id(format!("layout:{name}"), name).build(app)?;
             submenu = submenu.item(&item);
         }
         let submenu = submenu.build()?;
         builder = builder.item(&submenu);
+    }
+
+    let favorite_layouts = storage::favorite_layouts();
+    let favorite_skins = storage::favorite_skins();
+    let mut favorites = SubmenuBuilder::new(app, "Favoris");
+    let mut has_favorites = false;
+    for name in &layout_names {
+        if favorite_layouts.contains(&name.to_lowercase()) {
+            let item = MenuItemBuilder::with_id(format!("layout:{name}"), name).build(app)?;
+            favorites = favorites.item(&item);
+            has_favorites = true;
+        }
+    }
+    if let Some(root) = commands::skin_root() {
+        let registry = Registry::scan(root.to_string_lossy().to_string());
+        for folder in &registry.folders {
+            for file in &folder.files {
+                if favorite_skins.contains(&persistence::skin_key(&file.path).to_lowercase()) {
+                    let item = MenuItemBuilder::with_id(
+                        format!("skin:{}", file.path.display()),
+                        format!("{} / {}", folder.name, file.filename),
+                    )
+                    .build(app)?;
+                    favorites = favorites.item(&item);
+                    has_favorites = true;
+                }
+            }
+        }
+    }
+    if has_favorites {
+        builder = builder.item(&favorites.build()?);
     }
 
     builder = builder.separator();
@@ -113,6 +150,7 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .item(&hide_skins)
         .separator()
         .item(&selection_mode)
+        .item(&game_mode)
         .separator()
         .item(&logs)
         .separator()
@@ -144,6 +182,19 @@ pub fn handle_menu_event(app: &AppHandle, event: &MenuEvent) {
             if let Err(error) = selection.toggle(app, &windows) {
                 petrichor_core::logging::error(format!(
                     "Échec du basculement du mode sélection : {error}"
+                ));
+            }
+        }
+        "game-mode" => {
+            let state = app.state::<GameModeState>();
+            let result = if state.is_active() {
+                gamemode::leave(app, &state)
+            } else {
+                gamemode::enter(app, &state)
+            };
+            if let Err(error) = result {
+                petrichor_core::logging::warning(format!(
+                    "Échec du basculement du Game Mode : {error}"
                 ));
             }
         }

@@ -1128,7 +1128,7 @@ fn set_clipboard(text: &str) -> Result<(), String> {
     Err("aucun outil presse-papiers disponible".to_string())
 }
 
-fn set_wallpaper(path: &str) -> Result<(), String> {
+pub(crate) fn set_wallpaper(path: &str) -> Result<(), String> {
     let path = PathBuf::from(path);
     if !path.is_file() {
         return Err(format!("fond d'écran introuvable : {}", path.display()));

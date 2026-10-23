@@ -1,12 +1,17 @@
 mod bangs;
 mod commands;
+mod gamemode;
 mod layouts;
+mod manage;
 mod menu;
 mod notifications;
+mod packages;
 mod persistence;
 mod selection;
+mod storage;
 mod tray;
 mod tray_measure;
+mod updates;
 mod windows;
 
 use tauri::{Emitter, Manager};
@@ -22,6 +27,7 @@ pub fn run() {
         .manage(menu::MenuState::new())
         .manage(selection::SelectionState::new())
         .manage(tray_measure::TrayMeasureState::new())
+        .manage(gamemode::GameModeState::new())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -73,6 +79,31 @@ pub fn run() {
             commands::read_measures,
             commands::execute_bang,
             commands::get_paths,
+            manage::manage_snapshot,
+            manage::skin_details,
+            manage::update_skin_state,
+            manage::set_skin_favorite,
+            manage::set_layout_favorite,
+            manage::settings,
+            manage::save_settings,
+            manage::reset_statistics,
+            manage::delete_log_file,
+            manage::open_log_folder,
+            manage::open_skin_folder,
+            manage::open_skin_editor,
+            manage::create_skin,
+            layouts::save_layout,
+            layouts::delete_layout,
+            layouts::edit_layout,
+            layouts::load_layout,
+            gamemode::game_mode_status,
+            gamemode::set_game_mode_config,
+            gamemode::toggle_game_mode,
+            packages::inspect_package,
+            packages::create_package,
+            packages::install_package,
+            updates::check_updates,
+            updates::download_update,
             commands::frontend_log,
             commands::demo_event,
             windows::toggle_skin_window,
@@ -99,6 +130,7 @@ pub fn run() {
             } else {
                 tray_measure::spawn(app.handle());
             }
+            gamemode::spawn(app.handle().clone());
             petrichor_core::logging::notice(format!(
                 "Petrichor {} démarré",
                 petrichor_core::version()

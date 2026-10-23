@@ -10,6 +10,7 @@ use petrichor_core::{build_skin, SkinState, Variables};
 
 use crate::commands::MeasureStore;
 use crate::persistence;
+use crate::storage;
 use crate::windows::{self, SkinWindows};
 
 const PREFIX: &str = "skin-menu:";
@@ -165,6 +166,10 @@ fn build_skin_menu(
     let save = MenuItemBuilder::with_id(id(label, "save"), "Enregistrer la position")
         .build(app)
         .map_err(|error| error.to_string())?;
+    let favorite = CheckMenuItemBuilder::with_id(id(label, "toggle:favorite"), "Favori")
+        .checked(storage::is_skin_favorite(&info.path))
+        .build(app)
+        .map_err(|error| error.to_string())?;
 
     let custom = custom_items(app, label, &skin, measures, &info.path)?;
 
@@ -185,7 +190,8 @@ fn build_skin_menu(
         .item(&draggable)
         .item(&keep)
         .item(&snap)
-        .item(&save);
+        .item(&save)
+        .item(&favorite);
 
     if !custom.is_empty() {
         builder = builder.separator();
@@ -260,6 +266,15 @@ pub fn handle_event(app: &AppHandle, event: &MenuEvent) {
         "toggle:draggable" => toggle(app, label, |state| state.draggable, "Draggable"),
         "toggle:keep" => toggle(app, label, |state| state.keep_on_screen, "KeepOnScreen"),
         "toggle:snap" => toggle(app, label, |state| state.snap_edges, "SnapEdges"),
+        "toggle:favorite" => {
+            let windows = app.state::<SkinWindows>();
+            match windows.info(label) {
+                Some(info) => {
+                    storage::set_skin_favorite(&info.path, !storage::is_skin_favorite(&info.path))
+                }
+                None => Err(format!("skin introuvable : {label}")),
+            }
+        }
         value if value.starts_with("zpos:") => {
             let value = value.trim_start_matches("zpos:");
             execute(app, label, &format!("!ZPos {value}"))

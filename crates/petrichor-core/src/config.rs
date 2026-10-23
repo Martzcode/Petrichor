@@ -196,12 +196,14 @@ pub struct GlobalSettings {
     pub net_out_speed: u64,
     pub disable_dragging: bool,
     pub selected_color: Option<Color>,
+    pub skin_editor: Option<String>,
     pub tray_execute_r: Option<String>,
     pub tray_execute_m: Option<String>,
     pub tray_execute_dr: Option<String>,
     pub tray_execute_dm: Option<String>,
     pub disable_version_check: bool,
     pub disable_auto_update: bool,
+    pub update_url: Option<String>,
     pub hardware_acceleration: u8,
     pub skin_path: PathBuf,
     pub language: Option<u32>,
@@ -289,12 +291,14 @@ impl Default for GlobalSettings {
             net_out_speed: 1_000_000,
             disable_dragging: false,
             selected_color: None,
+            skin_editor: None,
             tray_execute_r: None,
             tray_execute_m: None,
             tray_execute_dr: None,
             tray_execute_dm: None,
             disable_version_check: false,
             disable_auto_update: false,
+            update_url: None,
             hardware_acceleration: 2,
             skin_path: PathBuf::new(),
             language: None,
@@ -332,6 +336,9 @@ impl GlobalSettings {
         if let Some(value) = section.get("SelectedColor") {
             settings.selected_color = try_read_color(value).ok();
         }
+        if let Some(value) = section.get("SkinEditor") {
+            settings.skin_editor = Some(value.to_string());
+        }
         if let Some(value) = section.get("TrayExecuteR") {
             settings.tray_execute_r = Some(value.to_string());
         }
@@ -349,6 +356,9 @@ impl GlobalSettings {
         }
         if let Some(value) = section.get("DisableAutoUpdate") {
             settings.disable_auto_update = parse_bool(value);
+        }
+        if let Some(value) = section.get("UpdateUrl") {
+            settings.update_url = Some(value.to_string());
         }
         if let Some(value) = section.get("HardwareAcceleration") {
             settings.hardware_acceleration =
@@ -398,6 +408,9 @@ impl GlobalSettings {
                 ),
             );
         }
+        if let Some(editor) = &self.skin_editor {
+            ini.set(RAINMETER_SECTION, "SkinEditor", editor);
+        }
         if let Some(action) = &self.tray_execute_r {
             ini.set(RAINMETER_SECTION, "TrayExecuteR", action);
         }
@@ -420,6 +433,9 @@ impl GlobalSettings {
             "DisableAutoUpdate",
             bool_str(self.disable_auto_update),
         );
+        if let Some(url) = &self.update_url {
+            ini.set(RAINMETER_SECTION, "UpdateUrl", url);
+        }
         ini.set(
             RAINMETER_SECTION,
             "HardwareAcceleration",

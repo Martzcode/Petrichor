@@ -126,8 +126,15 @@ export interface GlobalSettings {
   net_in_speed: number;
   net_out_speed: number;
   disable_dragging: boolean;
+  selected_color: { r: number; g: number; b: number; a: number } | null;
+  skin_editor: string | null;
+  tray_execute_r: string | null;
+  tray_execute_m: string | null;
+  tray_execute_dr: string | null;
+  tray_execute_dm: string | null;
   disable_version_check: boolean;
   disable_auto_update: boolean;
+  update_url: string | null;
   hardware_acceleration: number;
   skin_path: string;
   language: number | null;
@@ -340,8 +347,338 @@ export class PetrichorIpc {
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke<Registry>('scan_skins', { root });
   }
+
+  async manageSnapshot(): Promise<ManageSnapshot | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<ManageSnapshot>('manage_snapshot');
+  }
+
+  async skinDetails(path: string): Promise<SkinDetails | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<SkinDetails>('skin_details', { path });
+  }
+
+  async updateSkinState(
+    path: string,
+    patch: SkinStatePatch,
+  ): Promise<SkinState | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<SkinState>('update_skin_state', { path, patch });
+  }
+
+  async setSkinFavorite(path: string, favorite: boolean): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('set_skin_favorite', { path, favorite });
+  }
+
+  async setLayoutFavorite(name: string, favorite: boolean): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('set_layout_favorite', { name, favorite });
+  }
+
+  async getSettings(): Promise<GlobalSettings | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<GlobalSettings>('settings');
+  }
+
+  async saveSettings(settings: GlobalSettings): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('save_settings', { settings });
+  }
+
+  async saveLayout(
+    name: string,
+    excludeUnused: boolean,
+    includeWallpaper: boolean,
+  ): Promise<LayoutInfo | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<LayoutInfo>('save_layout', {
+      name,
+      excludeUnused,
+      includeWallpaper,
+    });
+  }
+
+  async deleteLayout(name: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('delete_layout', { name });
+  }
+
+  async editLayout(name: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('edit_layout', { name });
+  }
+
+  async loadLayout(name: string): Promise<number> {
+    if (!this.available()) return 0;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<number>('load_layout', { name });
+  }
+
+  async saveGameMode(config: GameModeConfig): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('set_game_mode_config', { config });
+  }
+
+  async toggleGameMode(): Promise<boolean> {
+    if (!this.available()) return false;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<boolean>('toggle_game_mode');
+  }
+
+  async resetStatistics(): Promise<number> {
+    if (!this.available()) return 0;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<number>('reset_statistics');
+  }
+
+  async deleteLogFile(): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('delete_log_file');
+  }
+
+  async openLogFolder(): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('open_log_folder');
+  }
+
+  async openSkinFolder(path: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('open_skin_folder', { path });
+  }
+
+  async openSkinEditor(path: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('open_skin_editor', { path });
+  }
+
+  async createSkin(spec: NewSkinSpec): Promise<NewSkinResult | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<NewSkinResult>('create_skin', { spec });
+  }
+
+  async inspectPackage(path: string): Promise<PackageInfo | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<PackageInfo>('inspect_package', { path });
+  }
+
+  async createPackage(
+    spec: CreatePackageSpec,
+  ): Promise<CreatePackageResult | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<CreatePackageResult>('create_package', { spec });
+  }
+
+  async installPackage(
+    path: string,
+    components: string[],
+    merge: boolean,
+    preserveVariables: boolean,
+  ): Promise<InstallResult | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<InstallResult>('install_package', {
+      path,
+      components,
+      merge,
+      preserveVariables,
+    });
+  }
+
+  async checkUpdates(endpoint?: string): Promise<UpdateStatus | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<UpdateStatus>('check_updates', { endpoint });
+  }
+
+  async downloadUpdate(
+    url: string,
+    sha256: string,
+    filename?: string,
+  ): Promise<string> {
+    if (!this.available()) return '';
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<string>('download_update', { url, sha256, filename });
+  }
 }
 
 export const ipc = {
   inject: () => inject(PetrichorIpc),
 };
+
+export interface LayoutInfo {
+  name: string;
+  path: string;
+  modified_ms: number;
+  wallpaper: boolean;
+  skin_count: number;
+  is_favorite: boolean;
+}
+
+export interface SkinState {
+  window_x: number;
+  window_y: number;
+  anchor_x: number;
+  anchor_y: number;
+  always_on_top: number;
+  on_hover: number;
+  draggable: boolean;
+  snap_edges: boolean;
+  click_through: boolean;
+  keep_on_screen: boolean;
+  save_position: boolean;
+  start_hidden: boolean;
+  auto_select_screen: boolean;
+  alpha_value: number;
+  fade_duration: number;
+  group: string[];
+  drag_group: string[];
+  active: number;
+  load_order: number | null;
+  defaults: Record<string, string>;
+}
+
+export interface SkinMetadata {
+  name: string | null;
+  author: string | null;
+  information: string | null;
+  version: string | null;
+  license: string | null;
+}
+
+export interface SkinDetails {
+  path: string;
+  name: string;
+  folder: string;
+  metadata: SkinMetadata;
+  state: SkinState;
+  favorites: boolean;
+  open_label: string | null;
+}
+
+export interface SkinStatePatch {
+  always_on_top?: number;
+  click_through?: boolean;
+  draggable?: boolean;
+  keep_on_screen?: boolean;
+  snap_edges?: boolean;
+  save_position?: boolean;
+  auto_select_screen?: boolean;
+  on_hover?: number;
+  alpha_value?: number;
+  fade_duration?: number;
+  active?: number;
+  load_order?: number;
+}
+
+export interface GameModeConfig {
+  start_action: string;
+  stop_action: string;
+  detect_fullscreen: boolean;
+  detect_process: boolean;
+  process_list: string[];
+}
+
+export interface GameModeStatus {
+  active: boolean;
+  config: GameModeConfig;
+  fullscreen: boolean;
+  process: boolean;
+}
+
+export interface ManageSnapshot {
+  version: string;
+  skins: Registry;
+  windows: SkinWindowInfo[];
+  layouts: LayoutInfo[];
+  settings: GlobalSettings;
+  game_mode: GameModeStatus;
+  paths: AppPaths;
+}
+
+export interface NewSkinSpec {
+  name: string;
+  author: string;
+  width: number;
+  height: number;
+}
+
+export interface NewSkinResult {
+  path: string;
+  folder: string;
+}
+
+export interface PackageMetadata {
+  name: string;
+  author: string;
+  version: string;
+  load: string;
+  merge_skins: boolean;
+  variable_files: string[];
+  minimum_petrichor: string;
+}
+
+export interface PackageInfo {
+  path: string;
+  metadata: PackageMetadata;
+  components: Record<string, number>;
+  files: number;
+  bytes: number;
+}
+
+export interface CreatePackageSpec {
+  source: string;
+  output: string;
+  name: string;
+  author: string;
+  version: string;
+  load: string;
+  layouts: string[];
+  include_plugins: boolean;
+  merge_skins: boolean;
+}
+
+export interface CreatePackageResult {
+  path: string;
+  files: number;
+  bytes: number;
+}
+
+export interface InstallResult {
+  metadata: PackageMetadata;
+  installed: string[];
+  files: number;
+  layout_loaded: string | null;
+  warnings: string[];
+}
+
+export interface UpdateStatus {
+  current: string;
+  latest: string;
+  available: boolean;
+  url: string;
+  sha256: string;
+  notes: string;
+}
+
+export interface SkinOptionsSnapshot {
+  disable_dragging: boolean;
+}

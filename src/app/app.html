@@ -1,7 +1,46 @@
 <main class="shell">
   <header>
-    <h1>{{ title() }}</h1>
-    <p class="subtitle">Personnalisation du bureau Linux par skins</p>
+    <div>
+      <h1>{{ title() }}</h1>
+      <p class="subtitle">Gérer les skins, layouts, paquets et réglages</p>
+    </div>
+    <nav class="tabs" aria-label="Gestion">
+      <button
+        type="button"
+        [class.active]="tab() === 'skins'"
+        (click)="setTab('skins')"
+      >
+        Skins
+      </button>
+      <button
+        type="button"
+        [class.active]="tab() === 'layouts'"
+        (click)="setTab('layouts')"
+      >
+        Layouts
+      </button>
+      <button
+        type="button"
+        [class.active]="tab() === 'game'"
+        (click)="setTab('game')"
+      >
+        Game Mode
+      </button>
+      <button
+        type="button"
+        [class.active]="tab() === 'settings'"
+        (click)="setTab('settings')"
+      >
+        Réglages
+      </button>
+      <button
+        type="button"
+        [class.active]="tab() === 'packages'"
+        (click)="setTab('packages')"
+      >
+        Paquets
+      </button>
+    </nav>
   </header>
 
   @if (!ipc.hasBackend()) {
@@ -11,93 +50,671 @@
     <code>npm run desktop:dev</code>.
   </section>
   } @if (notice(); as message) {
-  <section class="notice">{{ message }}</section>
-  }
-
-  <section class="panel">
-    <h2>Application</h2>
-    <dl>
-      <dt>Version</dt>
-      <dd>{{ ipc.appVersion() }}</dd>
-      @if (ipc.systemInfo(); as sys) {
-      <dt>Système</dt>
-      <dd>{{ sys.os_name }} {{ sys.os_version }}</dd>
-      <dt>Hôte</dt>
-      <dd>{{ sys.hostname }} ({{ sys.user_name }})</dd>
-      <dt>Uptime</dt>
-      <dd>{{ sys.uptime_secs }} s</dd>
-      }
-    </dl>
-    <div class="actions">
-      <button
-        type="button"
-        (click)="emitDemoEvent()"
-        [disabled]="!ipc.hasBackend()"
-      >
-        Émettre un événement
-      </button>
-      <button
-        type="button"
-        (click)="clearLogs()"
-        [disabled]="!ipc.hasBackend()"
-      >
-        Effacer les logs
-      </button>
-      <button type="button" (click)="openAbout()">À propos</button>
-    </div>
+  <section class="notice success">{{ message }}</section>
+  } @if (error(); as message) {
+  <section class="notice error">{{ message }}</section>
+  } @if (busy()) {
+  <section class="notice busy">Opération en cours…</section>
+  } @if (snapshot(); as state) {
+  <section class="summary">
+    <span>Petrichor {{ state.version }}</span>
+    <span>{{ state.skins.folders.length }} dossiers</span>
+    <span>{{ state.windows.length }} skins ouverts</span>
+    <span>{{ state.layouts.length }} layouts</span>
+    <span [class.on]="state.game_mode.active">
+      Game Mode {{ state.game_mode.active ? 'actif' : 'inactif' }}
+    </span>
   </section>
 
-  @if (aboutOpen()) {
-  <div class="overlay" (click)="closeAbout()">
-    <section class="about" (click)="$event.stopPropagation()">
-      <h2>À propos de Petrichor</h2>
-      <dl>
-        <dt>Version</dt>
-        <dd>{{ ipc.appVersion() }}</dd>
-        @if (ipc.systemInfo(); as sys) {
-        <dt>Système</dt>
-        <dd>{{ sys.os_name }} {{ sys.os_version }}</dd>
-        <dt>Hôte</dt>
-        <dd>{{ sys.hostname }} ({{ sys.user_name }})</dd>
-        }
-        <dt>Configuration</dt>
-        <dd>{{ paths()?.config ?? 'indisponible' }}</dd>
-        <dt>Skins</dt>
-        <dd>{{ paths()?.skins ?? 'indisponible' }}</dd>
-        <dt>Journal</dt>
-        <dd>{{ paths()?.log ?? 'indisponible' }}</dd>
-      </dl>
-      <div class="actions">
-        <button type="button" (click)="closeAbout()">Fermer</button>
+  @switch (tab()) { @case ('skins') {
+  <section class="panel split">
+    <div class="list-column">
+      <div class="panel-head">
+        <h2>Skins</h2>
+        <div class="toolbar">
+          <input
+            type="search"
+            placeholder="Rechercher…"
+            [value]="search()"
+            (input)="search.set(inputValue($event))"
+          />
+          <button type="button" (click)="showNewSkin.set(true)">
+            Nouveau skin
+          </button>
+        </div>
       </div>
-    </section>
-  </div>
-  }
 
-  <section class="panel">
-    <h2>Skins</h2>
-    <ul class="skins">
-      @for (folder of skins(); track folder.path) {
-      <li>
-        <span class="skin-name">{{ folder.name }}</span>
-        @for (file of folder.files; track file.path) {
-        <button type="button" (click)="toggleSkin(file.path)">
-          {{ file.filename }}
-        </button>
-        @if (labelFor(file.path); as label) {
-        <button type="button" class="secondary" (click)="closeSkin(label)">
+      <div class="folders">
+        @for (folder of visibleFolders(); track folder.path) {
+        <article class="folder">
+          <header>
+            <div>
+              <h3>{{ folder.name }}</h3>
+              <p>{{ folder.path }}</p>
+            </div>
+            @if (folder.has_favorite) {
+            <span class="badge">★</span>
+            }
+          </header>
+          @for (file of folder.files; track file.path) {
+          <div
+            class="skin-row"
+            [class.selected]="details()?.path === file.path"
+          >
+            <button type="button" class="link" (click)="selectSkin(file.path)">
+              {{ file.filename }}
+            </button>
+            <span class="state">
+              {{ labelFor(file.path) ? 'ouvert' : 'inactif' }}
+            </span>
+            <button type="button" class="small" (click)="toggleSkin(file.path)">
+              {{ labelFor(file.path) ? 'Masquer' : 'Afficher' }}
+            </button>
+            @if (labelFor(file.path); as label) {
+            <button
+              type="button"
+              class="small secondary"
+              (click)="closeSkin(label)"
+            >
+              Fermer
+            </button>
+            }
+            <button
+              type="button"
+              class="small star"
+              [class.on]="file.is_favorite"
+              (click)="toggleSkinFavorite(file.path, file.is_favorite)"
+              [title]="file.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'"
+            >
+              {{ file.is_favorite ? '★' : '☆' }}
+            </button>
+          </div>
+          }
+        </article>
+        } @empty {
+        <p class="empty">Aucun skin détecté.</p>
+        }
+      </div>
+    </div>
+
+    <aside class="detail-column">
+      @if (details(); as skin) {
+      <div class="panel-head">
+        <h2>{{ skin.metadata.name || skin.name }}</h2>
+        <button
+          type="button"
+          class="small secondary"
+          (click)="details.set(null)"
+        >
           Fermer
         </button>
-        } }
-      </li>
-      } @empty {
-      <li class="empty">Aucun skin détecté.</li>
+      </div>
+      <dl class="meta">
+        <dt>Auteur</dt>
+        <dd>{{ skin.metadata.author || '—' }}</dd>
+        <dt>Version</dt>
+        <dd>{{ skin.metadata.version || '—' }}</dd>
+        <dt>Licence</dt>
+        <dd>{{ skin.metadata.license || '—' }}</dd>
+        <dt>Dossier</dt>
+        <dd class="path">{{ skin.folder }}</dd>
+        <dt>État</dt>
+        <dd>{{ skin.open_label || 'inactif' }}</dd>
+      </dl>
+      @if (skin.metadata.information) {
+      <p class="information">{{ skin.metadata.information }}</p>
       }
-    </ul>
+
+      <h3>Options</h3>
+      <div class="checks">
+        <label>
+          <input
+            type="checkbox"
+            [checked]="skin.state.draggable"
+            (change)="patchSkin({ draggable: checked($event) })"
+          />
+          Déplaçable
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            [checked]="skin.state.click_through"
+            (change)="patchSkin({ click_through: checked($event) })"
+          />
+          Clic à travers
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            [checked]="skin.state.keep_on_screen"
+            (change)="patchSkin({ keep_on_screen: checked($event) })"
+          />
+          Rester visible
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            [checked]="skin.state.snap_edges"
+            (change)="patchSkin({ snap_edges: checked($event) })"
+          />
+          Aligner aux bords
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            [checked]="skin.state.save_position"
+            (change)="patchSkin({ save_position: checked($event) })"
+          />
+          Enregistrer la position
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            [checked]="skin.state.auto_select_screen"
+            (change)="patchSkin({ auto_select_screen: checked($event) })"
+          />
+          Écran sous la souris
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            [checked]="skin.favorites"
+            (change)="toggleSkinFavorite(skin.path, skin.favorites)"
+          />
+          Favori
+        </label>
+      </div>
+
+      <div class="fields">
+        <label>
+          Z-order
+          <select
+            [value]="skin.state.always_on_top"
+            (change)="patchSkin({ always_on_top: numberValue($event) })"
+          >
+            <option [value]="-2">Sous le bureau</option>
+            <option [value]="-1">Normal</option>
+            <option [value]="1">Toujours au-dessus</option>
+            <option [value]="2">Toujours au-dessus +</option>
+          </select>
+        </label>
+        <label>
+          Survol
+          <select
+            [value]="skin.state.on_hover"
+            (change)="patchSkin({ on_hover: numberValue($event) })"
+          >
+            <option [value]="0">Aucun</option>
+            <option [value]="1">Masquer</option>
+            <option [value]="2">Fondu</option>
+          </select>
+        </label>
+        <label>
+          Transparence {{ skin.state.alpha_value }}
+          <input
+            type="range"
+            min="0"
+            max="255"
+            [value]="skin.state.alpha_value"
+            (change)="patchSkin({ alpha_value: numberValue($event) })"
+          />
+        </label>
+        <label>
+          Durée du fondu (ms)
+          <input
+            type="number"
+            min="0"
+            [value]="skin.state.fade_duration"
+            (change)="patchSkin({ fade_duration: numberValue($event) })"
+          />
+        </label>
+      </div>
+
+      <div class="actions">
+        @if (skin.open_label) {
+        <button type="button" (click)="closeSkin(skin.open_label!)">
+          Décharger
+        </button>
+        } @else {
+        <button type="button" (click)="toggleSkin(skin.path)">Charger</button>
+        }
+        <button type="button" (click)="openSkinEditor(skin.path)">
+          Éditer
+        </button>
+        <button type="button" (click)="openSkinFolder(skin.path)">
+          Dossier
+        </button>
+      </div>
+      } @else {
+      <p class="empty">Sélectionnez un skin pour modifier ses options.</p>
+      }
+    </aside>
   </section>
+  } @case ('layouts') {
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Layouts</h2>
+      <span class="muted"
+        >Un layout mémorise les skins, positions et réglages.</span
+      >
+    </div>
+    <div class="inline-form">
+      <input
+        type="text"
+        placeholder="Nom du layout"
+        [value]="layoutName()"
+        (input)="layoutName.set(inputValue($event))"
+      />
+      <label>
+        <input
+          type="checkbox"
+          [checked]="excludeUnused()"
+          (change)="excludeUnused.set(checked($event))"
+        />
+        Exclure les skins non utilisés
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          [checked]="includeWallpaper()"
+          (change)="includeWallpaper.set(checked($event))"
+        />
+        Inclure le fond d'écran
+      </label>
+      <button type="button" (click)="saveLayout()">Enregistrer</button>
+    </div>
+
+    <div class="cards">
+      @for (layout of state.layouts; track layout.name) {
+      <article class="card">
+        <header>
+          <div>
+            <h3>{{ layout.name }}</h3>
+            <p>
+              {{ layout.skin_count }} skin(s) · {{
+              formatDate(layout.modified_ms) }} @if (layout.wallpaper) { · fond
+              d'écran }
+            </p>
+          </div>
+          <button
+            type="button"
+            class="star"
+            [class.on]="layout.is_favorite"
+            (click)="toggleLayoutFavorite(layout)"
+            [title]="layout.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'"
+          >
+            {{ layout.is_favorite ? '★' : '☆' }}
+          </button>
+        </header>
+        <div class="actions">
+          <button type="button" (click)="loadLayout(layout.name)">
+            Charger
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            (click)="editLayout(layout.name)"
+          >
+            Éditer
+          </button>
+          <button
+            type="button"
+            class="danger"
+            (click)="deleteLayout(layout.name)"
+          >
+            Supprimer
+          </button>
+        </div>
+      </article>
+      } @empty {
+      <p class="empty">Aucun layout enregistré.</p>
+      }
+    </div>
+  </section>
+  } @case ('game') {
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Game Mode</h2>
+      <span class="badge" [class.on]="state.game_mode.active">
+        {{ state.game_mode.active ? 'Actif' : 'Inactif' }}
+      </span>
+    </div>
+    <div class="status-row">
+      <span [class.on]="state.game_mode.fullscreen">Plein écran</span>
+      <span [class.on]="state.game_mode.process">Processus</span>
+      <span [class.on]="state.game_mode.config.detect_fullscreen">
+        Détection plein écran {{ state.game_mode.config.detect_fullscreen ?
+        'activée' : 'désactivée' }}
+      </span>
+      <span [class.on]="state.game_mode.config.detect_process">
+        Détection processus {{ state.game_mode.config.detect_process ? 'activée'
+        : 'désactivée' }}
+      </span>
+    </div>
+
+    <div class="fields">
+      <label>
+        Layout au démarrage
+        <select [(ngModel)]="gameForm.start_action">
+          <option value="">Décharger tous les skins</option>
+          @for (layout of state.layouts; track layout.name) {
+          <option [value]="layout.name">{{ layout.name }}</option>
+          }
+        </select>
+      </label>
+      <label>
+        Layout à l'arrêt
+        <select [(ngModel)]="gameForm.stop_action">
+          <option value="">Recharger les skins précédents</option>
+          @for (layout of state.layouts; track layout.name) {
+          <option [value]="layout.name">{{ layout.name }}</option>
+          }
+        </select>
+      </label>
+    </div>
+    <div class="checks">
+      <label>
+        <input type="checkbox" [(ngModel)]="gameForm.detect_fullscreen" />
+        Détecter une application plein écran
+      </label>
+      <label>
+        <input type="checkbox" [(ngModel)]="gameForm.detect_process" />
+        Détecter les processus listés
+      </label>
+    </div>
+    <label class="block">
+      Processus (un par ligne)
+      <textarea rows="6" [(ngModel)]="processText"></textarea>
+    </label>
+    <div class="actions">
+      <button type="button" (click)="saveGameMode()">Enregistrer</button>
+      <button type="button" class="secondary" (click)="toggleGameMode()">
+        {{ state.game_mode.active ? 'Désactiver' : 'Activer' }} manuellement
+      </button>
+    </div>
+  </section>
+  } @case ('settings') {
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Réglages</h2>
+      <button type="button" (click)="saveGlobalSettings()">Enregistrer</button>
+    </div>
+    @if (settings) {
+    <div class="settings-grid">
+      <fieldset>
+        <legend>Général</legend>
+        <label
+          ><input type="checkbox" [(ngModel)]="settings.debug" /> Mode
+          debug</label
+        >
+        <label
+          ><input type="checkbox" [(ngModel)]="settings.logging" /> Journal
+          fichier</label
+        >
+        <label
+          ><input type="checkbox" [(ngModel)]="settings.disable_dragging" />
+          Verrouiller le déplacement</label
+        >
+        <label
+          ><input type="checkbox" [(ngModel)]="settings.tray_icon" /> Icône de
+          tray</label
+        >
+        <label
+          ><input type="checkbox" [(ngModel)]="settings.normal_stay_desktop" />
+          Rester sur le bureau</label
+        >
+      </fieldset>
+
+      <fieldset>
+        <legend>Mises à jour</legend>
+        <label
+          ><input
+            type="checkbox"
+            [(ngModel)]="settings.disable_version_check"
+          />
+          Désactiver la vérification</label
+        >
+        <label
+          ><input type="checkbox" [(ngModel)]="settings.disable_auto_update" />
+          Désactiver l'installation automatique</label
+        >
+        <label
+          >URL du manifeste
+          <input
+            type="url"
+            [(ngModel)]="settings.update_url"
+            placeholder="https://…/update.json"
+        /></label>
+        <div class="actions">
+          <button type="button" class="secondary" (click)="checkUpdates()">
+            Vérifier
+          </button>
+          @if (updateStatus()?.available) {
+          <button type="button" (click)="downloadUpdate()">
+            Télécharger {{ updateStatus()!.latest }}
+          </button>
+          }
+        </div>
+        @if (updateStatus(); as update) {
+        <p class="muted">
+          Version actuelle {{ update.current }} · dernière {{ update.latest }}
+        </p>
+        @if (update.notes) {
+        <p class="information">{{ update.notes }}</p>
+        } } @if (downloadedUpdate(); as path) {
+        <p class="muted path">Téléchargé : {{ path }}</p>
+        }
+      </fieldset>
+
+      <fieldset>
+        <legend>Chemins et édition</legend>
+        <label
+          >Éditeur externe
+          <input
+            type="text"
+            [(ngModel)]="settings.skin_editor"
+            placeholder="xdg-open"
+        /></label>
+        <label
+          >Chemin des skins <input type="text" [(ngModel)]="settings.skin_path"
+        /></label>
+        <label
+          >Langue (LCID) <input type="number" [(ngModel)]="settings.language"
+        /></label>
+        <label>
+          Accélération matérielle
+          <select [(ngModel)]="settings.hardware_acceleration">
+            <option [ngValue]="0">Natif</option>
+            <option [ngValue]="1">Compatibilité</option>
+            <option [ngValue]="2">Automatique</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Réseau et tray</legend>
+        <label
+          >Vitesse entrante
+          <input type="number" [(ngModel)]="settings.net_in_speed"
+        /></label>
+        <label
+          >Vitesse sortante
+          <input type="number" [(ngModel)]="settings.net_out_speed"
+        /></label>
+        <label
+          >Action clic droit
+          <input type="text" [(ngModel)]="settings.tray_execute_r"
+        /></label>
+        <label
+          >Action clic molette
+          <input type="text" [(ngModel)]="settings.tray_execute_m"
+        /></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Maintenance</legend>
+        <div class="actions">
+          <button type="button" class="secondary" (click)="openLogFolder()">
+            Ouvrir le journal
+          </button>
+          <button type="button" class="danger" (click)="deleteLog()">
+            Supprimer le journal
+          </button>
+          <button type="button" class="secondary" (click)="resetStatistics()">
+            Réinitialiser les statistiques
+          </button>
+        </div>
+        @if (state.paths.config) {
+        <p class="muted path">Configuration : {{ state.paths.config }}</p>
+        }
+      </fieldset>
+    </div>
+    }
+  </section>
+  } @case ('packages') {
+  <section class="panel">
+    <div class="panel-head"><h2>Paquets</h2></div>
+
+    <fieldset>
+      <legend>Installer un paquet</legend>
+      <div class="inline-form">
+        <input
+          type="text"
+          placeholder="/chemin/vers/paquet.zip"
+          [value]="packagePath()"
+          (input)="packagePath.set(inputValue($event))"
+        />
+        <button type="button" (click)="inspectPackage()">Inspecter</button>
+      </div>
+      @if (packageInfo(); as info) {
+      <div class="package-info">
+        <strong>{{ info.metadata.name || 'Paquet sans nom' }}</strong>
+        <span>{{ info.metadata.author || 'auteur inconnu' }}</span>
+        <span>version {{ info.metadata.version || '—' }}</span>
+        <span>{{ info.files }} fichiers · {{ formatBytes(info.bytes) }}</span>
+      </div>
+      <div class="checks">
+        @for (entry of componentEntries(); track entry[0]) {
+        <label>
+          <input
+            type="checkbox"
+            [checked]="selectedComponents().includes(entry[0])"
+            (change)="toggleComponent(entry[0])"
+          />
+          {{ entry[0] }} ({{ entry[1] }})
+        </label>
+        }
+      </div>
+      <div class="checks">
+        <label
+          ><input
+            type="checkbox"
+            [checked]="packageMerge()"
+            (change)="packageMerge.set(checked($event))"
+          />
+          Fusionner</label
+        >
+        <label
+          ><input
+            type="checkbox"
+            [checked]="preserveVariables()"
+            (change)="preserveVariables.set(checked($event))"
+          />
+          Conserver les variables utilisateur</label
+        >
+      </div>
+      <div class="actions">
+        <button type="button" (click)="installPackage()">Installer</button>
+      </div>
+      @if (installResult(); as result) {
+      <p class="muted">
+        Composants installés : {{ result.installed.join(', ') }} · {{
+        result.files }} fichiers
+      </p>
+      @if (result.layout_loaded) {
+      <p class="muted">Layout chargé : {{ result.layout_loaded }}</p>
+      } @for (warning of result.warnings; track warning) {
+      <p class="notice error">{{ warning }}</p>
+      } } }
+    </fieldset>
+
+    <fieldset>
+      <legend>Créer un paquet</legend>
+      <div class="fields">
+        <label>
+          Dossier de skin
+          <select
+            [value]="packageForm.source"
+            (change)="choosePackageSource(inputValue($event))"
+          >
+            @for (folder of state.skins.folders; track folder.path) {
+            <option [value]="folder.path">{{ folder.name }}</option>
+            }
+          </select>
+        </label>
+        <label
+          >Fichier de sortie
+          <input type="text" [(ngModel)]="packageForm.output"
+        /></label>
+        <label>Nom <input type="text" [(ngModel)]="packageForm.name" /></label>
+        <label
+          >Auteur <input type="text" [(ngModel)]="packageForm.author"
+        /></label>
+        <label
+          >Version <input type="text" [(ngModel)]="packageForm.version"
+        /></label>
+        <label>
+          Layout à charger
+          <select [(ngModel)]="packageForm.load">
+            <option value="">Aucun</option>
+            @for (layout of state.layouts; track layout.name) {
+            <option [value]="layout.name">{{ layout.name }}</option>
+            }
+          </select>
+        </label>
+      </div>
+      <div class="checks">
+        @for (layout of state.layouts; track layout.name) {
+        <label>
+          <input
+            type="checkbox"
+            [checked]="hasPackageLayout(layout.name)"
+            (change)="togglePackageLayout(layout.name)"
+          />
+          Inclure {{ layout.name }}
+        </label>
+        }
+        <label
+          ><input type="checkbox" [(ngModel)]="packageForm.include_plugins" />
+          Inclure les plugins</label
+        >
+        <label
+          ><input type="checkbox" [(ngModel)]="packageForm.merge_skins" />
+          Fusion par défaut</label
+        >
+      </div>
+      <div class="actions">
+        <button type="button" (click)="createPackage()">Créer le paquet</button>
+      </div>
+    </fieldset>
+  </section>
+  } }
 
   <section class="panel">
-    <h2>Journal ({{ logEntries().length }})</h2>
+    <div class="panel-head">
+      <h2>Journal ({{ logEntries().length }})</h2>
+      <div class="toolbar">
+        <button type="button" class="secondary" (click)="emitDemoEvent()">
+          Événement de démonstration
+        </button>
+        <button type="button" class="secondary" (click)="clearLogs()">
+          Effacer
+        </button>
+        <button type="button" class="secondary" (click)="openAbout()">
+          À propos
+        </button>
+      </div>
+    </div>
     <ul class="logs">
       @for (entry of logEntries(); track $index) {
       <li [class]="entry.level">
@@ -110,4 +727,54 @@
       }
     </ul>
   </section>
+  } @else {
+  <section class="panel">
+    <p class="empty">Chargement de la gestion…</p>
+  </section>
+  }
 </main>
+
+@if (showNewSkin()) {
+<div class="overlay" (click)="showNewSkin.set(false)">
+  <section class="about" (click)="$event.stopPropagation()">
+    <h2>Nouveau skin</h2>
+    <div class="fields">
+      <label>Nom <input type="text" [(ngModel)]="newSkinForm.name" /></label>
+      <label
+        >Auteur <input type="text" [(ngModel)]="newSkinForm.author"
+      /></label>
+      <label
+        >Largeur <input type="number" min="1" [(ngModel)]="newSkinForm.width"
+      /></label>
+      <label
+        >Hauteur <input type="number" min="1" [(ngModel)]="newSkinForm.height"
+      /></label>
+    </div>
+    <div class="actions">
+      <button type="button" (click)="createNewSkin()">Créer</button>
+      <button type="button" class="secondary" (click)="showNewSkin.set(false)">
+        Annuler
+      </button>
+    </div>
+  </section>
+</div>
+} @if (aboutOpen()) {
+<div class="overlay" (click)="closeAbout()">
+  <section class="about" (click)="$event.stopPropagation()">
+    <h2>À propos de Petrichor</h2>
+    <dl>
+      <dt>Version</dt>
+      <dd>{{ snapshot()?.version ?? ipc.appVersion() }}</dd>
+      <dt>Configuration</dt>
+      <dd class="path">{{ paths()?.config ?? 'indisponible' }}</dd>
+      <dt>Skins</dt>
+      <dd class="path">{{ paths()?.skins ?? 'indisponible' }}</dd>
+      <dt>Journal</dt>
+      <dd class="path">{{ paths()?.log ?? 'indisponible' }}</dd>
+    </dl>
+    <div class="actions">
+      <button type="button" (click)="closeAbout()">Fermer</button>
+    </div>
+  </section>
+</div>
+}
