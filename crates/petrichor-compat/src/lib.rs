@@ -7,7 +7,7 @@ use petrichor_sys::{backend, SystemBackend};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "UPPERCASE")]
 pub enum Plan {
     A,
     B,
@@ -1139,6 +1139,12 @@ mod tests {
         assert!(migrated.contains("PlayerName=audacious"));
         assert!(migrated.contains("ImageName=/"));
         assert!(!migrated.contains("Segoe UI"));
+        let (skin, _) = petrichor_core::build_skin(&path);
+        let report = analyze_skin_with(&skin, &Mappings::builtin(), &detect_capabilities());
+        assert!(!report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "nowplaying"));
         std::fs::remove_dir_all(directory.path()).ok();
     }
 
