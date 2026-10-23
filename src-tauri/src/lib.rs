@@ -83,6 +83,7 @@ pub fn run() {
             manage::skin_details,
             manage::update_skin_state,
             manage::set_skin_favorite,
+            manage::set_active_variant,
             manage::set_layout_favorite,
             manage::settings,
             manage::save_settings,
@@ -104,6 +105,7 @@ pub fn run() {
             packages::install_package,
             updates::check_updates,
             updates::download_update,
+            updates::install_update,
             commands::frontend_log,
             commands::demo_event,
             windows::toggle_skin_window,
@@ -131,6 +133,7 @@ pub fn run() {
                 tray_measure::spawn(app.handle());
             }
             gamemode::spawn(app.handle().clone());
+            updates::spawn();
             petrichor_core::logging::notice(format!(
                 "Petrichor {} démarré",
                 petrichor_core::version()

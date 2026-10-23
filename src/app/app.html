@@ -86,15 +86,33 @@
 
       <div class="folders">
         @for (folder of visibleFolders(); track folder.path) {
-        <article class="folder">
+        <article
+          class="folder"
+          [style.margin-left.px]="(folder.level - 1) * 12"
+        >
           <header>
             <div>
               <h3>{{ folder.name }}</h3>
               <p>{{ folder.path }}</p>
             </div>
-            @if (folder.has_favorite) {
-            <span class="badge">★</span>
-            }
+            <div class="folder-tools">
+              @if (folder.files.length > 1) {
+              <label class="variant">
+                Variante
+                <select
+                  [value]="folder.active_variant"
+                  (change)="setActiveVariant(folder, numberValue($event))"
+                >
+                  @for (file of folder.files; track file.path; let index =
+                  $index) {
+                  <option [value]="index">{{ file.filename }}</option>
+                  }
+                </select>
+              </label>
+              } @if (folder.has_favorite) {
+              <span class="badge">★</span>
+              }
+            </div>
           </header>
           @for (file of folder.files; track file.path) {
           <div
@@ -218,6 +236,14 @@
         <label>
           <input
             type="checkbox"
+            [checked]="skin.state.start_hidden"
+            (change)="patchSkin({ start_hidden: checked($event) })"
+          />
+          Démarrer masqué
+        </label>
+        <label>
+          <input
+            type="checkbox"
             [checked]="skin.favorites"
             (change)="toggleSkinFavorite(skin.path, skin.favorites)"
           />
@@ -268,12 +294,76 @@
             (change)="patchSkin({ fade_duration: numberValue($event) })"
           />
         </label>
+        <label>
+          Position X
+          <input
+            type="number"
+            [value]="skin.state.window_x"
+            (change)="patchSkin({ window_x: numberValue($event) })"
+          />
+        </label>
+        <label>
+          Position Y
+          <input
+            type="number"
+            [value]="skin.state.window_y"
+            (change)="patchSkin({ window_y: numberValue($event) })"
+          />
+        </label>
+        <label>
+          Ancrage X
+          <input
+            type="number"
+            step="0.1"
+            [value]="skin.state.anchor_x"
+            (change)="patchSkin({ anchor_x: numberValue($event) })"
+          />
+        </label>
+        <label>
+          Ancrage Y
+          <input
+            type="number"
+            step="0.1"
+            [value]="skin.state.anchor_y"
+            (change)="patchSkin({ anchor_y: numberValue($event) })"
+          />
+        </label>
+        <label>
+          Ordre de chargement
+          <input
+            type="number"
+            [value]="skin.state.load_order ?? 0"
+            (change)="patchSkin({ load_order: numberValue($event) })"
+          />
+        </label>
+        <label>
+          Moniteur
+          <select
+            value=""
+            (change)="patchSkin({ monitor: numberValue($event) })"
+          >
+            <option value="">Déplacer vers…</option>
+            @for (monitor of state.monitors; track monitor.index) {
+            <option [value]="monitor.index">
+              {{ monitor.name }} ({{ monitor.width }}×{{ monitor.height }}){{
+              monitor.primary ? ' · principal' : '' }}
+            </option>
+            }
+          </select>
+        </label>
       </div>
 
       <div class="actions">
         @if (skin.open_label) {
         <button type="button" (click)="closeSkin(skin.open_label!)">
           Décharger
+        </button>
+        <button
+          type="button"
+          class="secondary"
+          (click)="refreshSkin(skin.path)"
+        >
+          Rafraîchir
         </button>
         } @else {
         <button type="button" (click)="toggleSkin(skin.path)">Charger</button>
@@ -283,6 +373,13 @@
         </button>
         <button type="button" (click)="openSkinFolder(skin.path)">
           Dossier
+        </button>
+        <button
+          type="button"
+          class="secondary"
+          (click)="packageSkin(skin.path)"
+        >
+          Créer un paquet
         </button>
       </div>
       } @else {
@@ -493,6 +590,10 @@
           <button type="button" (click)="downloadUpdate()">
             Télécharger {{ updateStatus()!.latest }}
           </button>
+          } @if (downloadedUpdate()) {
+          <button type="button" (click)="installDownloadedUpdate()">
+            Installer maintenant
+          </button>
           }
         </div>
         @if (updateStatus(); as update) {
@@ -501,6 +602,8 @@
         </p>
         @if (update.notes) {
         <p class="information">{{ update.notes }}</p>
+        } @if (update.pending) {
+        <p class="muted">Installation planifiée au prochain démarrage.</p>
         } } @if (downloadedUpdate(); as path) {
         <p class="muted path">Téléchargé : {{ path }}</p>
         }
@@ -626,7 +729,13 @@
       <div class="actions">
         <button type="button" (click)="installPackage()">Installer</button>
       </div>
-      @if (installResult(); as result) {
+      @if (packageProgress(); as progress) { @if (progress.phase === 'install')
+      {
+      <p class="muted">
+        Installation : {{ progress.current }}/{{ progress.total }} — {{
+        progress.message }}
+      </p>
+      } } @if (installResult(); as result) {
       <p class="muted">
         Composants installés : {{ result.installed.join(', ') }} · {{
         result.files }} fichiers
@@ -663,6 +772,20 @@
         <label
           >Version <input type="text" [(ngModel)]="packageForm.version"
         /></label>
+        <label
+          >Bannière (image)
+          <input
+            type="text"
+            [(ngModel)]="packageForm.banner"
+            placeholder="/chemin/banner.png"
+        /></label>
+        <label
+          >Fichiers de variables
+          <input
+            type="text"
+            [(ngModel)]="variableText"
+            placeholder="Variables.inc, UserVariables.inc"
+        /></label>
         <label>
           Layout à charger
           <select [(ngModel)]="packageForm.load">
@@ -689,6 +812,14 @@
           Inclure les plugins</label
         >
         <label
+          ><input type="checkbox" [(ngModel)]="packageForm.include_fonts" />
+          Inclure les polices</label
+        >
+        <label
+          ><input type="checkbox" [(ngModel)]="packageForm.include_addons" />
+          Inclure les addons</label
+        >
+        <label
           ><input type="checkbox" [(ngModel)]="packageForm.merge_skins" />
           Fusion par défaut</label
         >
@@ -696,6 +827,12 @@
       <div class="actions">
         <button type="button" (click)="createPackage()">Créer le paquet</button>
       </div>
+      @if (packageProgress(); as progress) {
+      <p class="muted">
+        {{ progress.phase === 'create' ? 'Création' : 'Installation' }} : {{
+        progress.current }}/{{ progress.total }} — {{ progress.message }}
+      </p>
+      }
     </fieldset>
   </section>
   } }

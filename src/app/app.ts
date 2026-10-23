@@ -17,6 +17,7 @@ import {
   ManageSnapshot,
   NewSkinSpec,
   PackageInfo,
+  PackageProgress,
   PetrichorIpc,
   SkinDetails,
   SkinFolder,
@@ -52,6 +53,7 @@ export class App implements OnInit {
   protected readonly includeWallpaper = signal(false);
   protected readonly showNewSkin = signal(false);
   protected readonly packageInfo = signal<PackageInfo | null>(null);
+  protected readonly packageProgress = signal<PackageProgress | null>(null);
   protected readonly packagePath = signal('');
   protected readonly selectedComponents = signal<string[]>([]);
   protected readonly packageMerge = signal(true);
@@ -71,6 +73,7 @@ export class App implements OnInit {
     height: 100,
   };
   protected packageForm: CreatePackageSpec = emptyPackageSpec();
+  protected variableText = '';
 
   async ngOnInit(): Promise<void> {
     if (!this.ipc.hasBackend()) {
@@ -84,6 +87,9 @@ export class App implements OnInit {
 
     await this.ipc.onLog((entry) => {
       this.logEntries.update((entries) => [...entries, entry]);
+    });
+    await this.ipc.onPackageProgress((progress) => {
+      this.packageProgress.set(progress);
     });
 
     await this.run('Chargement de la gestion', async () => {
@@ -127,6 +133,41 @@ export class App implements OnInit {
     await this.run('Chargement du skin', async () => {
       this.details.set(await this.ipc.skinDetails(path));
     });
+  }
+
+  protected async setActiveVariant(
+    folder: SkinFolder,
+    index: number,
+  ): Promise<void> {
+    const file = folder.files[index];
+    if (!file) return;
+    await this.run('Sélection de la variante', async () => {
+      await this.ipc.setActiveVariant(file.path);
+      await this.refreshSnapshot();
+      this.notice.set(`Variante active : ${file.filename}`);
+    });
+  }
+
+  protected async refreshSkin(path: string): Promise<void> {
+    const label = this.labelFor(path);
+    if (!label) {
+      this.error.set('Le skin doit être chargé pour être rafraîchi.');
+      return;
+    }
+    await this.run('Rafraîchissement du skin', async () => {
+      await this.ipc.executeBang(label, '!Refresh');
+      this.notice.set('Skin rafraîchi');
+    });
+  }
+
+  protected packageSkin(path: string): void {
+    const folderPath = path.slice(0, path.lastIndexOf('/'));
+    const name = folderPath.split('/').pop() ?? 'Mon paquet';
+    this.packageForm.source = folderPath;
+    this.packageForm.name = name;
+    this.packageForm.output = `${name}.zip`;
+    this.tab.set('packages');
+    this.notice.set(`Paquet préparé depuis « ${name} »`);
   }
 
   protected async toggleSkin(path: string): Promise<void> {
@@ -256,7 +297,11 @@ export class App implements OnInit {
 
   protected async checkUpdates(): Promise<void> {
     await this.run('Vérification des mises à jour', async () => {
-      this.updateStatus.set(await this.ipc.checkUpdates());
+      const status = await this.ipc.checkUpdates();
+      this.updateStatus.set(status);
+      if (status?.pending_path) {
+        this.downloadedUpdate.set(status.pending_path);
+      }
     });
   }
 
@@ -267,13 +312,27 @@ export class App implements OnInit {
       return;
     }
     await this.run('Téléchargement de la mise à jour', async () => {
+      const name = status.url.split('/').pop() || `${status.latest}.package`;
       const path = await this.ipc.downloadUpdate(
         status.url,
         status.sha256,
-        `${status.latest}.package`,
+        name,
+        status.latest,
       );
       this.downloadedUpdate.set(path);
-      this.notice.set(`Mise à jour téléchargée : ${path}`);
+      this.notice.set(
+        `Mise à jour téléchargée : ${path} — installation au prochain démarrage`,
+      );
+    });
+  }
+
+  protected async installDownloadedUpdate(): Promise<void> {
+    await this.run('Installation de la mise à jour', async () => {
+      const message = await this.ipc.installUpdate(
+        this.downloadedUpdate() ?? undefined,
+      );
+      this.downloadedUpdate.set(null);
+      this.notice.set(message);
     });
   }
 
@@ -324,6 +383,8 @@ export class App implements OnInit {
       if (!info) throw new Error('Paquet illisible.');
       this.packageInfo.set(info);
       this.selectedComponents.set(Object.keys(info.components));
+      this.packageMerge.set(info.metadata.merge_skins);
+      this.variableText = info.metadata.variable_files.join(', ');
       this.installResult.set(null);
     });
   }
@@ -338,6 +399,7 @@ export class App implements OnInit {
 
   protected async installPackage(): Promise<void> {
     await this.run('Installation du paquet', async () => {
+      this.packageProgress.set(null);
       const result = await this.ipc.installPackage(
         this.packagePath(),
         this.selectedComponents(),
@@ -355,7 +417,12 @@ export class App implements OnInit {
   }
 
   protected async createPackage(): Promise<void> {
+    this.packageForm.variable_files = this.variableText
+      .split(/[,;\n]/)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
     await this.run('Création du paquet', async () => {
+      this.packageProgress.set(null);
       const result = await this.ipc.createPackage(this.packageForm);
       if (!result) throw new Error('Création impossible.');
       this.packagePath.set(result.path);
@@ -493,5 +560,9 @@ function emptyPackageSpec(): CreatePackageSpec {
     layouts: [],
     include_plugins: false,
     merge_skins: true,
+    variable_files: [],
+    banner: null,
+    include_fonts: false,
+    include_addons: false,
   };
 }

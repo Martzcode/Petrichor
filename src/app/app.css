@@ -177,6 +177,26 @@ header h1 {
   overflow-wrap: anywhere;
 }
 
+.folder-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.variant {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  color: #7d8894;
+}
+
+.variant select {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.35rem;
+  max-width: 11rem;
+}
+
 .skin-row {
   display: flex;
   align-items: center;

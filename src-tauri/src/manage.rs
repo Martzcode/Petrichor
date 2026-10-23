@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 
 use petrichor_core::{ApplicationConfig, GlobalSettings, Metadata, SkinState};
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Manager, PhysicalPosition};
 
 use crate::commands;
 use crate::gamemode::GameModeStatus;
@@ -32,6 +32,18 @@ pub struct ManageSnapshot {
     pub settings: GlobalSettings,
     pub game_mode: GameModeStatus,
     pub paths: commands::AppPaths,
+    pub monitors: Vec<MonitorInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MonitorInfo {
+    pub index: usize,
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub primary: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -48,6 +60,12 @@ pub struct SkinStatePatch {
     pub fade_duration: Option<u32>,
     pub active: Option<i32>,
     pub load_order: Option<i32>,
+    pub window_x: Option<i32>,
+    pub window_y: Option<i32>,
+    pub anchor_x: Option<f32>,
+    pub anchor_y: Option<f32>,
+    pub start_hidden: Option<bool>,
+    pub monitor: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -78,8 +96,9 @@ pub fn manage_snapshot(app: tauri::AppHandle) -> Result<ManageSnapshot, String> 
         windows: windows.list(),
         layouts: layouts::list_info(),
         settings: settings(),
-        game_mode: crate::gamemode::game_mode_status(app),
+        game_mode: crate::gamemode::game_mode_status(app.clone()),
         paths: commands::get_paths(),
+        monitors: monitor_infos(&app),
     })
 }
 
@@ -147,13 +166,49 @@ pub fn update_skin_state(
     if let Some(value) = patch.load_order {
         state.load_order = Some(value);
     }
+    if let Some(value) = patch.window_x {
+        state.window_x = value;
+    }
+    if let Some(value) = patch.window_y {
+        state.window_y = value;
+    }
+    if let Some(value) = patch.anchor_x {
+        state.anchor_x = value;
+    }
+    if let Some(value) = patch.anchor_y {
+        state.anchor_y = value;
+    }
+    if let Some(value) = patch.start_hidden {
+        state.start_hidden = value;
+    }
+
+    let windows = app.state::<SkinWindows>();
+    let label = windows.find_by_path(&path);
+    if let Some(index) = patch.monitor {
+        let monitors = app.available_monitors().unwrap_or_default();
+        if let Some(monitor) = monitors.get(index) {
+            let size = label
+                .as_deref()
+                .and_then(|label| app.get_webview_window(label))
+                .and_then(|window| window.outer_size().ok())
+                .map(|size| (size.width as i32, size.height as i32))
+                .unwrap_or((0, 0));
+            let position = monitor.position();
+            let monitor_size = monitor.size();
+            state.window_x = position.x + (monitor_size.width as i32 - size.0).max(0) / 2;
+            state.window_y = position.y + (monitor_size.height as i32 - size.1).max(0) / 2;
+        }
+    }
+
     let saved = state.clone();
     persistence::update_state(&path, move |target| *target = saved);
 
-    let windows = app.state::<SkinWindows>();
-    if let Some(label) = windows.find_by_path(&path) {
+    if let Some(label) = label {
         let flags = commands::window_flags(&path);
         windows::apply_flags(&app, &windows, &label, flags)?;
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.set_position(PhysicalPosition::new(state.window_x, state.window_y));
+        }
         let _ = crate::bangs::emit(
             &app,
             &label,
@@ -170,6 +225,62 @@ pub fn update_skin_state(
         );
     }
     Ok(state)
+}
+
+#[tauri::command]
+pub fn set_active_variant(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    let path = PathBuf::from(&path);
+    let folder = path
+        .parent()
+        .ok_or_else(|| "dossier du skin introuvable".to_string())?;
+    let entries = std::fs::read_dir(folder).map_err(|error| error.to_string())?;
+    for entry in entries.flatten() {
+        let candidate = entry.path();
+        if candidate
+            .extension()
+            .is_none_or(|extension| !extension.eq_ignore_ascii_case("ini"))
+        {
+            continue;
+        }
+        let active = candidate == path;
+        persistence::update_state(&candidate, |state| {
+            state.active = if active { 1 } else { 0 };
+        });
+    }
+    let windows = app.state::<SkinWindows>();
+    if let Some(label) = windows.find_by_path(&path) {
+        let _ = crate::bangs::emit(&app, &label, crate::bangs::SkinCommand::Refresh);
+    }
+    Ok(())
+}
+
+fn monitor_infos(app: &tauri::AppHandle) -> Vec<MonitorInfo> {
+    let primary = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .and_then(|monitor| monitor.name().cloned());
+    app.available_monitors()
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+        .map(|(index, monitor)| {
+            let position = monitor.position();
+            let size = monitor.size();
+            MonitorInfo {
+                index,
+                name: monitor
+                    .name()
+                    .unwrap_or(&format!("Écran {}", index + 1))
+                    .to_string(),
+                x: position.x,
+                y: position.y,
+                width: size.width as i32,
+                height: size.height as i32,
+                primary: primary.as_deref() == monitor.name().map(String::as_str),
+            }
+        })
+        .collect()
 }
 
 #[tauri::command]

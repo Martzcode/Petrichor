@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use petrichor_core::IniFile;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use sha2::{Digest, Sha256};
+use tauri::{Emitter, Manager};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
@@ -15,6 +15,9 @@ use crate::windows::SkinWindows;
 
 const METADATA_FILE: &str = "Package.ini";
 const COMPONENTS: [&str; 5] = ["Skins", "Layouts", "Plugins", "Fonts", "Addons"];
+const MAGIC: &[u8] = b"PETRICHOR-PKG-1\n";
+const FOOTER: &[u8] = b"\nPETRICHOR-PKG-END\n";
+const PROGRESS_EVENT: &str = "petrichor://package-progress";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageMetadata {
@@ -32,6 +35,8 @@ pub struct PackageMetadata {
     pub variable_files: Vec<String>,
     #[serde(default)]
     pub minimum_petrichor: String,
+    #[serde(default)]
+    pub banner: String,
 }
 
 fn default_true() -> bool {
@@ -64,6 +69,22 @@ pub struct CreatePackageSpec {
     pub include_plugins: bool,
     #[serde(default = "default_true")]
     pub merge_skins: bool,
+    #[serde(default)]
+    pub variable_files: Vec<String>,
+    #[serde(default)]
+    pub banner: Option<String>,
+    #[serde(default)]
+    pub include_fonts: bool,
+    #[serde(default)]
+    pub include_addons: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PackageProgress {
+    pub phase: String,
+    pub current: usize,
+    pub total: usize,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -126,12 +147,17 @@ pub fn inspect_package(path: String) -> Result<PackageInfo, String> {
 }
 
 #[tauri::command]
-pub fn create_package(spec: CreatePackageSpec) -> Result<CreatePackageResult, String> {
-    create(&spec)
+pub async fn create_package(
+    app: tauri::AppHandle,
+    spec: CreatePackageSpec,
+) -> Result<CreatePackageResult, String> {
+    tauri::async_runtime::spawn_blocking(move || create(&spec, Some(&app)))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn install_package(
+pub async fn install_package(
     app: tauri::AppHandle,
     path: String,
     components: Option<Vec<String>>,
@@ -139,13 +165,19 @@ pub fn install_package(
     preserve_variables: bool,
 ) -> Result<InstallResult, String> {
     let roots = PackageRoots::from_app()?;
-    let mut result = install(
-        Path::new(&path),
-        &roots,
-        components.as_deref(),
-        merge,
-        preserve_variables,
-    )?;
+    let blocking_app = app.clone();
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
+        install(
+            Path::new(&path),
+            &roots,
+            components.as_deref(),
+            merge,
+            preserve_variables,
+            Some(&blocking_app),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     if !result.metadata.load.trim().is_empty()
         && result.installed.iter().any(|item| item == "Layouts")
     {
@@ -162,8 +194,9 @@ pub fn install_package(
 }
 
 fn inspect(path: &Path) -> Result<PackageInfo, String> {
-    let file = File::open(path).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let raw = std::fs::read(path).map_err(|error| error.to_string())?;
+    let data = unwrap_package(&raw)?;
+    let mut archive = ZipArchive::new(Cursor::new(data)).map_err(|error| error.to_string())?;
     let mut metadata = PackageMetadata::default();
     let mut components: BTreeMap<String, usize> = BTreeMap::new();
     let mut bytes = 0u64;
@@ -206,7 +239,10 @@ fn inspect(path: &Path) -> Result<PackageInfo, String> {
     })
 }
 
-fn create(spec: &CreatePackageSpec) -> Result<CreatePackageResult, String> {
+fn create(
+    spec: &CreatePackageSpec,
+    app: Option<&tauri::AppHandle>,
+) -> Result<CreatePackageResult, String> {
     let source = PathBuf::from(spec.source.trim());
     if !source.is_dir() {
         return Err(format!("dossier source introuvable : {}", source.display()));
@@ -240,15 +276,46 @@ fn create(spec: &CreatePackageSpec) -> Result<CreatePackageResult, String> {
         let dir = path.parent().unwrap_or(Path::new(""));
         collect_files(dir, &PathBuf::from("Layouts").join(name.trim()), &mut files)?;
     }
+    let Some(data_root) =
+        commands::skin_root().and_then(|root| root.parent().map(Path::to_path_buf))
+    else {
+        return Err("répertoire de données introuvable".to_string());
+    };
     if spec.include_plugins {
-        if let Some(root) =
-            commands::skin_root().and_then(|root| root.parent().map(Path::to_path_buf))
-        {
-            let plugins = root.join("Plugins");
-            if plugins.is_dir() {
-                collect_files(&plugins, Path::new("Plugins"), &mut files)?;
-            }
+        let plugins = data_root.join("Plugins");
+        if plugins.is_dir() {
+            collect_files(&plugins, Path::new("Plugins"), &mut files)?;
         }
+    }
+    if spec.include_fonts {
+        let fonts = data_root.join("Fonts");
+        if fonts.is_dir() {
+            collect_files(&fonts, Path::new("Fonts"), &mut files)?;
+        }
+    }
+    if spec.include_addons {
+        let addons = data_root.join("Addons");
+        if addons.is_dir() {
+            collect_files(&addons, Path::new("Addons"), &mut files)?;
+        }
+    }
+
+    let mut banner = String::new();
+    if let Some(path) = spec
+        .banner
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let path = PathBuf::from(path);
+        if !path.is_file() {
+            return Err(format!("bannière introuvable : {}", path.display()));
+        }
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("png");
+        banner = format!("Banner.{extension}");
+        files.push((banner.clone(), path));
     }
     if !files.iter().any(|(target, _)| target.starts_with("Skins/")) {
         return Err("aucun fichier de skin à empaqueter".to_string());
@@ -260,8 +327,14 @@ fn create(spec: &CreatePackageSpec) -> Result<CreatePackageResult, String> {
         version: spec.version.trim().to_string(),
         load: spec.load.trim().to_string(),
         merge_skins: spec.merge_skins,
-        variable_files: Vec::new(),
+        variable_files: spec
+            .variable_files
+            .iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect(),
         minimum_petrichor: petrichor_core::version().to_string(),
+        banner,
     };
     files.sort_by(|left, right| left.0.cmp(&right.0));
 
@@ -275,8 +348,8 @@ fn create(spec: &CreatePackageSpec) -> Result<CreatePackageResult, String> {
             .and_then(|extension| extension.to_str())
             .unwrap_or("zip")
     ));
-    let file = File::create(&temporary).map_err(|error| error.to_string())?;
-    let mut writer = ZipWriter::new(file);
+    let mut buffer = Cursor::new(Vec::new());
+    let mut writer = ZipWriter::new(&mut buffer);
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
         .unix_permissions(0o644);
@@ -288,7 +361,9 @@ fn create(spec: &CreatePackageSpec) -> Result<CreatePackageResult, String> {
         .write_all(metadata_text.as_bytes())
         .map_err(|error| error.to_string())?;
     let mut bytes = metadata_text.len() as u64;
-    for (target, source) in &files {
+    let total = files.len() + 1;
+    emit_progress(app, "create", 1, total, "Métadonnées du paquet");
+    for (index, (target, source)) in files.iter().enumerate() {
         writer
             .start_file(target, options)
             .map_err(|error| error.to_string())?;
@@ -297,9 +372,22 @@ fn create(spec: &CreatePackageSpec) -> Result<CreatePackageResult, String> {
             .write_all(&content)
             .map_err(|error| error.to_string())?;
         bytes += content.len() as u64;
+        emit_progress(app, "create", index + 2, total, target);
     }
     writer.finish().map_err(|error| error.to_string())?;
+    let data = buffer.into_inner();
+    let key = sha256_hex(&data);
+    let mut packaged =
+        Vec::with_capacity(MAGIC.len() + key.len() + data.len() + FOOTER.len() + key.len() + 1);
+    packaged.extend_from_slice(MAGIC);
+    packaged.extend_from_slice(key.as_bytes());
+    packaged.push(b'\n');
+    packaged.extend_from_slice(&data);
+    packaged.extend_from_slice(FOOTER);
+    packaged.extend_from_slice(key.as_bytes());
+    std::fs::write(&temporary, packaged).map_err(|error| error.to_string())?;
     std::fs::rename(&temporary, &output).map_err(|error| error.to_string())?;
+    emit_progress(app, "create", total, total, "Paquet terminé");
     Ok(CreatePackageResult {
         path: output,
         files: files.len() + 1,
@@ -313,6 +401,7 @@ fn install(
     components: Option<&[String]>,
     merge: bool,
     preserve_variables: bool,
+    app: Option<&tauri::AppHandle>,
 ) -> Result<InstallResult, String> {
     let info = inspect(path)?;
     let selected: BTreeSet<String> = match components {
@@ -322,11 +411,13 @@ fn install(
             .collect(),
         _ => info.components.keys().cloned().collect(),
     };
-    let file = File::open(path).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let raw = std::fs::read(path).map_err(|error| error.to_string())?;
+    let data = unwrap_package(&raw)?;
+    let mut archive = ZipArchive::new(Cursor::new(data)).map_err(|error| error.to_string())?;
     let mut installed = BTreeSet::new();
     let mut replaced = BTreeSet::new();
     let mut count = 0usize;
+    let total = archive.len();
 
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
@@ -356,6 +447,15 @@ fn install(
             continue;
         }
         let target = root.join(&remainder);
+        let existing = if preserve_variables
+            && target
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("ini"))
+        {
+            std::fs::read(&target).ok()
+        } else {
+            None
+        };
 
         if !merge {
             let replace_root = if component == "Skins" || component == "Layouts" {
@@ -382,16 +482,13 @@ fn install(
         entry
             .read_to_end(&mut content)
             .map_err(|error| error.to_string())?;
-        if preserve_variables
-            && target
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("ini"))
-        {
-            content = merge_variables(&target, &content);
+        if let Some(existing) = existing {
+            content = merge_variables(&existing, &content);
         }
         write_atomic(&target, &content)?;
         installed.insert(component);
         count += 1;
+        emit_progress(app, "install", index + 1, total, &raw_name);
     }
 
     Ok(InstallResult {
@@ -418,10 +515,11 @@ fn write_atomic(target: &Path, content: &[u8]) -> Result<(), String> {
     std::fs::rename(&temporary, target).map_err(|error| error.to_string())
 }
 
-fn merge_variables(existing: &Path, incoming: &[u8]) -> Vec<u8> {
-    let Ok(existing) = IniFile::load(existing) else {
+fn merge_variables(existing: &[u8], incoming: &[u8]) -> Vec<u8> {
+    let Ok(existing) = std::str::from_utf8(existing) else {
         return incoming.to_vec();
     };
+    let existing = IniFile::parse(existing);
     let Some(variables) = existing.section("Variables") else {
         return incoming.to_vec();
     };
@@ -522,6 +620,7 @@ fn metadata_from_ini(ini: &IniFile) -> PackageMetadata {
             .map(str::to_string)
             .collect(),
         minimum_petrichor: get(options, "MinimumPetrichor"),
+        banner: get(metadata, "Banner"),
     }
 }
 
@@ -543,7 +642,64 @@ fn metadata_to_ini(metadata: &PackageMetadata) -> IniFile {
         &metadata.variable_files.join("|"),
     );
     ini.set("Options", "MinimumPetrichor", &metadata.minimum_petrichor);
+    if !metadata.banner.is_empty() {
+        ini.set("Metadata", "Banner", &metadata.banner);
+    }
     ini
+}
+
+fn emit_progress(
+    app: Option<&tauri::AppHandle>,
+    phase: &str,
+    current: usize,
+    total: usize,
+    message: &str,
+) {
+    if let Some(app) = app {
+        let _ = app.emit(
+            PROGRESS_EVENT,
+            PackageProgress {
+                phase: phase.to_string(),
+                current,
+                total,
+                message: message.to_string(),
+            },
+        );
+    }
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(data))
+}
+
+fn unwrap_package(raw: &[u8]) -> Result<Vec<u8>, String> {
+    if !raw.starts_with(MAGIC) {
+        return Ok(raw.to_vec());
+    }
+    let rest = &raw[MAGIC.len()..];
+    let key_end = rest
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .ok_or_else(|| "en-tête de paquet invalide".to_string())?;
+    let header_key =
+        std::str::from_utf8(&rest[..key_end]).map_err(|_| "clé de paquet invalide".to_string())?;
+    let body = &rest[key_end + 1..];
+    if body.len() < FOOTER.len() + 64 {
+        return Err("paquet tronqué".to_string());
+    }
+    let footer_start = body.len() - FOOTER.len() - 64;
+    if !body[footer_start..].starts_with(FOOTER) {
+        return Err("pied de paquet invalide".to_string());
+    }
+    let footer_key = &body[footer_start + FOOTER.len()..];
+    if header_key.as_bytes() != footer_key {
+        return Err("clés de validation incohérentes".to_string());
+    }
+    let data = &body[..footer_start];
+    if sha256_hex(data).as_bytes() != footer_key {
+        return Err("clé de validation du paquet invalide".to_string());
+    }
+    Ok(data.to_vec())
 }
 
 #[cfg(test)]
@@ -590,15 +746,19 @@ mod tests {
             layouts: Vec::new(),
             include_plugins: false,
             merge_skins: true,
+            variable_files: Vec::new(),
+            banner: None,
+            include_fonts: false,
+            include_addons: false,
         };
-        create(&spec).unwrap();
+        create(&spec, None).unwrap();
         let info = inspect(&archive).unwrap();
         assert_eq!(info.metadata.name, "Clock");
         assert_eq!(info.components.get("Skins"), Some(&2));
 
         let install_root = temp("install");
         let target = roots(&install_root);
-        let result = install(&archive, &target, None, true, true).unwrap();
+        let result = install(&archive, &target, None, true, true, None).unwrap();
         assert_eq!(result.files, 2);
         assert!(target.skins.join("Clock/Clock.ini").is_file());
         assert!(target.skins.join("Clock/@Resources/note.txt").is_file());
@@ -608,11 +768,62 @@ mod tests {
     }
 
     #[test]
+    fn roundtrips_metadata_options() {
+        let metadata = PackageMetadata {
+            name: "Suite".to_string(),
+            author: "Alice".to_string(),
+            version: "2.0".to_string(),
+            load: "@Backup".to_string(),
+            merge_skins: false,
+            variable_files: vec!["Variables.inc".to_string(), "Theme.inc".to_string()],
+            minimum_petrichor: "0.1".to_string(),
+            banner: "Banner.png".to_string(),
+        };
+        let parsed = metadata_from_ini(&metadata_to_ini(&metadata));
+        assert_eq!(parsed.name, "Suite");
+        assert!(!parsed.merge_skins);
+        assert_eq!(parsed.variable_files, ["Variables.inc", "Theme.inc"]);
+        assert_eq!(parsed.banner, "Banner.png");
+    }
+
+    #[test]
+    fn rejects_tampered_envelope() {
+        let directory = temp("envelope");
+        let archive = directory.join("Clock.zip");
+        let skin = directory.join("Clock");
+        std::fs::create_dir_all(&skin).unwrap();
+        std::fs::write(skin.join("Clock.ini"), "[Meter]\nMeter=String\n").unwrap();
+        let spec = CreatePackageSpec {
+            source: skin.to_string_lossy().to_string(),
+            output: archive.to_string_lossy().to_string(),
+            name: "Clock".to_string(),
+            author: String::new(),
+            version: String::new(),
+            load: String::new(),
+            layouts: Vec::new(),
+            include_plugins: false,
+            merge_skins: true,
+            variable_files: Vec::new(),
+            banner: None,
+            include_fonts: false,
+            include_addons: false,
+        };
+        create(&spec, None).unwrap();
+        let mut raw = std::fs::read(&archive).unwrap();
+        let position = raw.len() / 2;
+        raw[position] ^= 0xff;
+        std::fs::write(&archive, raw).unwrap();
+        assert!(inspect(&archive).is_err());
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
     fn preserves_existing_variables() {
         let incoming = "[Variables]\nColor=0,0,0\nNew=1\n[Meter]\nMeter=String\n";
         let directory = temp("variables");
         let existing = directory.join("Skin.ini");
         std::fs::write(&existing, "[Variables]\nColor=1,2,3\n").unwrap();
+        let existing = std::fs::read(&existing).unwrap();
         let merged = String::from_utf8(merge_variables(&existing, incoming.as_bytes())).unwrap();
         assert!(merged.contains("Color=1,2,3"));
         assert!(merged.contains("New=1"));

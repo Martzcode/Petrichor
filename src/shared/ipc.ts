@@ -369,6 +369,12 @@ export class PetrichorIpc {
     return invoke<SkinState>('update_skin_state', { path, patch });
   }
 
+  async setActiveVariant(path: string): Promise<void> {
+    if (!this.available()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('set_active_variant', { path });
+  }
+
   async setSkinFavorite(path: string, favorite: boolean): Promise<void> {
     if (!this.available()) return;
     const { invoke } = await import('@tauri-apps/api/core');
@@ -473,6 +479,16 @@ export class PetrichorIpc {
     return invoke<NewSkinResult>('create_skin', { spec });
   }
 
+  async onPackageProgress(
+    callback: (progress: PackageProgress) => void,
+  ): Promise<() => void> {
+    if (!this.available()) return () => undefined;
+    const { listen } = await import('@tauri-apps/api/event');
+    return listen<PackageProgress>('petrichor://package-progress', (event) =>
+      callback(event.payload),
+    );
+  }
+
   async inspectPackage(path: string): Promise<PackageInfo | null> {
     if (!this.available()) return null;
     const { invoke } = await import('@tauri-apps/api/core');
@@ -513,10 +529,22 @@ export class PetrichorIpc {
     url: string,
     sha256: string,
     filename?: string,
+    version?: string,
   ): Promise<string> {
     if (!this.available()) return '';
     const { invoke } = await import('@tauri-apps/api/core');
-    return invoke<string>('download_update', { url, sha256, filename });
+    return invoke<string>('download_update', {
+      url,
+      sha256,
+      filename,
+      version,
+    });
+  }
+
+  async installUpdate(path?: string): Promise<string> {
+    if (!this.available()) return '';
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<string>('install_update', { path });
   }
 }
 
@@ -587,6 +615,12 @@ export interface SkinStatePatch {
   fade_duration?: number;
   active?: number;
   load_order?: number;
+  window_x?: number;
+  window_y?: number;
+  anchor_x?: number;
+  anchor_y?: number;
+  start_hidden?: boolean;
+  monitor?: number;
 }
 
 export interface GameModeConfig {
@@ -604,6 +638,16 @@ export interface GameModeStatus {
   process: boolean;
 }
 
+export interface MonitorInfo {
+  index: number;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  primary: boolean;
+}
+
 export interface ManageSnapshot {
   version: string;
   skins: Registry;
@@ -612,6 +656,7 @@ export interface ManageSnapshot {
   settings: GlobalSettings;
   game_mode: GameModeStatus;
   paths: AppPaths;
+  monitors: MonitorInfo[];
 }
 
 export interface NewSkinSpec {
@@ -634,6 +679,7 @@ export interface PackageMetadata {
   merge_skins: boolean;
   variable_files: string[];
   minimum_petrichor: string;
+  banner: string;
 }
 
 export interface PackageInfo {
@@ -654,6 +700,17 @@ export interface CreatePackageSpec {
   layouts: string[];
   include_plugins: boolean;
   merge_skins: boolean;
+  variable_files: string[];
+  banner: string | null;
+  include_fonts: boolean;
+  include_addons: boolean;
+}
+
+export interface PackageProgress {
+  phase: string;
+  current: number;
+  total: number;
+  message: string;
 }
 
 export interface CreatePackageResult {
@@ -677,6 +734,8 @@ export interface UpdateStatus {
   url: string;
   sha256: string;
   notes: string;
+  pending: boolean;
+  pending_path: string | null;
 }
 
 export interface SkinOptionsSnapshot {
