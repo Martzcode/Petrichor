@@ -1,5 +1,6 @@
 mod bangs;
 mod commands;
+mod compatibility;
 mod gamemode;
 mod layouts;
 mod manage;
@@ -108,6 +109,11 @@ pub fn run() {
             updates::install_update,
             commands::frontend_log,
             commands::demo_event,
+            compatibility::compatibility_capabilities,
+            compatibility::compatibility_report,
+            compatibility::export_compatibility_report,
+            compatibility::preview_skin_migration,
+            compatibility::migrate_skin_file,
             windows::toggle_skin_window,
             windows::close_skin_window,
             windows::skin_window_info,

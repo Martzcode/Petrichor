@@ -1,4 +1,5 @@
 pub mod bang;
+pub mod compat;
 pub mod config;
 pub mod diagnostics;
 pub mod error;

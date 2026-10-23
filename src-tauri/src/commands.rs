@@ -126,6 +126,7 @@ pub fn get_paths() -> AppPaths {
 #[tauri::command]
 pub fn load_skin(path: String) -> SkinLoadResult {
     let (skin, diagnostics) = build_skin(Path::new(&path));
+    crate::compatibility::log_report(&crate::compatibility::report_for(Path::new(&path)));
     for diagnostic in diagnostics.iter() {
         logging::logger().log(
             match diagnostic.severity {
@@ -147,6 +148,7 @@ pub fn load_render_model(path: String, store: tauri::State<'_, MeasureStore>) ->
     let overrides = store.options(path);
     let (model, diagnostics) =
         build_render_model_with_options(path, overlay.as_ref(), overrides.as_ref());
+    crate::compatibility::log_report(&crate::compatibility::report_for(path));
     for diagnostic in diagnostics.iter() {
         logging::logger().log(
             match diagnostic.severity {

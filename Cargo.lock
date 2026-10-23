@@ -2784,7 +2784,10 @@ name = "petrichor-compat"
 version = "0.1.0"
 dependencies = [
  "petrichor-core",
+ "petrichor-sys",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 

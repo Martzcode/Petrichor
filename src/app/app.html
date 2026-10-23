@@ -158,7 +158,12 @@
     <aside class="detail-column">
       @if (details(); as skin) {
       <div class="panel-head">
-        <h2>{{ skin.metadata.name || skin.name }}</h2>
+        <h2>
+          {{ skin.metadata.name || skin.name }}
+          <span class="badge" [class]="'badge compat-' + compatBadgeLevel()">
+            {{ compatCount() ? compatCount() + ' adaptation(s)' : 'Natif' }}
+          </span>
+        </h2>
         <button
           type="button"
           class="small secondary"
@@ -182,6 +187,42 @@
       @if (skin.metadata.information) {
       <p class="information">{{ skin.metadata.information }}</p>
       }
+
+      <h3>Compatibilité</h3>
+      @if (skin.compat.entries.length) {
+      <ul class="compat-list">
+        @for (entry of skin.compat.entries; track entry.feature +
+        entry.requested) {
+        <li>
+          <span
+            class="badge"
+            [class]="'badge compat-' + entry.level"
+            [title]="compatLevelLabel(entry.level)"
+          >
+            {{ entry.feature }}
+          </span>
+          <span class="muted">{{ entry.requested }}</span>
+          @if (entry.resolved && entry.resolved !== entry.requested) {
+          <span>→ {{ entry.resolved }}</span>
+          } @if (entry.plan) {
+          <span class="badge">{{ compatPlanLabel(entry.plan) }}</span>
+          } @if (entry.message) {
+          <span class="muted">{{ entry.message }}</span>
+          }
+        </li>
+        }
+      </ul>
+      } @else {
+      <p class="muted">Aucune adaptation nécessaire.</p>
+      }
+      <div class="actions">
+        <button type="button" class="secondary" (click)="exportCompatReport()">
+          Exporter le rapport
+        </button>
+        <button type="button" class="secondary" (click)="migrateCurrentSkin()">
+          Migrer les chemins
+        </button>
+      </div>
 
       <h3>Options</h3>
       <div class="checks">
@@ -652,6 +693,27 @@
           >Action clic molette
           <input type="text" [(ngModel)]="settings.tray_execute_m"
         /></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Compatibilité</legend>
+        <div class="capabilities">
+          @for (capability of state.capabilities; track capability.id) {
+          <div
+            class="capability"
+            [title]="capability.hint || capability.detail"
+          >
+            <span class="badge" [class.on]="capability.available">
+              {{ capability.label }}
+            </span>
+            <span class="muted">
+              {{ capability.available ? capability.detail : (capability.hint ||
+              capability.detail) }}
+            </span>
+          </div>
+          }
+        </div>
+        <p class="muted path">Mappings : {{ compatConfigPath() }}</p>
       </fieldset>
 
       <fieldset>

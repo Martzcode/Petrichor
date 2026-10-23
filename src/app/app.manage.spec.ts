@@ -1,7 +1,12 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { App } from './app';
-import { ManageSnapshot, PackageInfo, PetrichorIpc } from '../shared/ipc';
+import {
+  ManageSnapshot,
+  PackageInfo,
+  PetrichorIpc,
+  SkinDetails,
+} from '../shared/ipc';
 
 const snapshot: ManageSnapshot = {
   version: '0.0.0-test',
@@ -67,6 +72,16 @@ const snapshot: ManageSnapshot = {
   },
   paths: { config: null, skins: '/tmp/skins', log: null },
   monitors: [],
+  capabilities: [
+    {
+      id: 'mpris',
+      label: 'MPRIS',
+      available: true,
+      fallback: false,
+      detail: 'MPRIS actif',
+      hint: null,
+    },
+  ],
 };
 
 const packageInfo: PackageInfo = {
@@ -87,6 +102,66 @@ const packageInfo: PackageInfo = {
   banner_data: 'data:image/png;base64,iVBORw0KGgo=',
 };
 
+const details: SkinDetails = {
+  path: '/tmp/skins/Clock/Clock.ini',
+  name: 'Clock',
+  folder: '/tmp/skins/Clock',
+  metadata: {
+    name: 'Clock',
+    author: 'Alice',
+    version: '1.0',
+    license: null,
+    information: null,
+  },
+  state: {
+    window_x: 0,
+    window_y: 0,
+    anchor_x: 0,
+    anchor_y: 0,
+    start_hidden: false,
+    always_on_top: -1,
+    click_through: false,
+    draggable: true,
+    keep_on_screen: false,
+    snap_edges: false,
+    save_position: false,
+    auto_select_screen: false,
+    on_hover: 0,
+    alpha_value: 255,
+    fade_duration: 0,
+    active: 1,
+    load_order: 0,
+    group: [],
+    drag_group: [],
+    defaults: {},
+  },
+  favorites: false,
+  open_label: null,
+  compat: {
+    skin: 'Clock',
+    entries: [
+      {
+        feature: 'font',
+        requested: 'Segoe UI',
+        resolved: 'Cantarell',
+        level: 'automatic',
+        plan: 'B',
+        message: 'Police remplacée.',
+        action: null,
+      },
+      {
+        feature: 'command',
+        requested: 'tasklist',
+        resolved: 'ps',
+        level: 'manual',
+        plan: 'A',
+        message: null,
+        action: 'Vérifiez la commande.',
+      },
+    ],
+  },
+};
+
 function fakeIpc() {
   const backend = signal(true);
   const logs = signal([]);
@@ -101,6 +176,21 @@ function fakeIpc() {
     onPackageProgress: async () => undefined,
     manageSnapshot: async () => snapshot,
     inspectPackage: async () => packageInfo,
+    skinDetails: async () => details,
+    exportCompatibilityReport: async () => '/tmp/report.json',
+    previewSkinMigration: async () => [
+      {
+        line: 2,
+        key: 'FontFace',
+        before: 'Segoe UI',
+        after: 'Cantarell',
+      },
+    ],
+    migrateSkin: async () => ({
+      path: details.path,
+      backup: `${details.path}.petrichor.bak`,
+      changes: [],
+    }),
   };
 }
 
@@ -150,6 +240,32 @@ describe('Manage UI', () => {
     expect(element.querySelector('img.package-banner')).toBeTruthy();
     expect(element.textContent).toContain('Variables.inc');
     expect(element.textContent).toContain('Horloge Été');
+  });
+
+  it('shows compatibility entries and system capabilities', async () => {
+    TestBed.configureTestingModule({
+      imports: [App],
+      providers: [{ provide: PetrichorIpc, useValue: fakeIpc() }],
+    });
+    const fixture = TestBed.createComponent(App);
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+
+    element.querySelector<HTMLButtonElement>('.skin-row .link')?.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(element.textContent).toContain('2 adaptation(s)');
+    expect(element.textContent).toContain('Cantarell');
+    expect(element.textContent).toContain('Plan B');
+    expect(element.textContent).toContain('Migrer les chemins');
+
+    const tabs = Array.from(
+      element.querySelectorAll<HTMLButtonElement>('.tabs button'),
+    );
+    tabs.find((button) => button.textContent?.trim() === 'Réglages')?.click();
+    fixture.detectChanges();
+    expect(element.textContent).toContain('MPRIS actif');
   });
 
   it('opens the package creator with Info, Options and Advanced tabs', async () => {

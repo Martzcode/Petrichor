@@ -266,6 +266,7 @@ export interface RenderModel {
   background: Background;
   meters: RenderMeter[];
   local_fonts: string[];
+  blur?: boolean;
   measure_values: Record<string, string>;
 }
 

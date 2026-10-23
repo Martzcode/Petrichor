@@ -147,7 +147,9 @@ impl Variables {
                 if let Some(offset) = find_char(&chars, i + 1, '%') {
                     let name: String = chars[i + 1..i + 1 + offset].iter().collect();
                     if is_env_name(&name) {
-                        if let Ok(value) = std::env::var(&name) {
+                        if let Ok(value) = std::env::var(&name).or_else(|_| {
+                            crate::compat::windows_env(&name).ok_or(std::env::VarError::NotPresent)
+                        }) {
                             output.push_str(&self.expand_inner(&value, depth + 1));
                             i += offset + 2;
                             continue;
@@ -307,6 +309,14 @@ mod tests {
         vars.set("A", "10");
         vars.set("B", "#A#+5");
         assert_eq!(vars.expand("#B#"), "10+5");
+    }
+
+    #[test]
+    fn expands_windows_environment_variables() {
+        let vars = Variables::new();
+        let expanded = vars.expand("%USERPROFILE%/Skins");
+        assert!(!expanded.contains('%'));
+        assert!(expanded.ends_with("/Skins"));
     }
 
     #[test]

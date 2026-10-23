@@ -354,6 +354,7 @@ pub struct RenderModel {
     pub background: Background,
     pub meters: Vec<RenderMeter>,
     pub local_fonts: Vec<PathBuf>,
+    pub blur: bool,
     pub measure_values: BTreeMap<String, String>,
 }
 
@@ -431,6 +432,7 @@ fn build_model_from_skin(
         background: render_background(&skin),
         meters,
         local_fonts: collect_local_fonts(&skin),
+        blur: skin.settings.blur,
         measure_values: report.strings,
     };
 
@@ -634,7 +636,11 @@ fn build_common(
 fn build_string(options: &[(String, String)], variables: &Variables) -> StringMeter {
     StringMeter {
         text: opt(options, variables, "Text"),
-        font_face: opt(options, variables, "FontFace").unwrap_or_else(|| "sans-serif".to_string()),
+        font_face: {
+            let face =
+                opt(options, variables, "FontFace").unwrap_or_else(|| "sans-serif".to_string());
+            crate::compat::substitute_font(&face).unwrap_or(face)
+        },
         font_size: opt(options, variables, "FontSize")
             .map(|value| read_f32(&value, 10.0))
             .unwrap_or(10.0),
@@ -1347,10 +1353,11 @@ fn collect_local_fonts(skin: &Skin) -> Vec<PathBuf> {
 }
 
 fn resolve_asset(skin: &Skin, value: &str, extensions: &[&str]) -> Option<PathBuf> {
-    let candidate = if let Some(relative) = value.strip_prefix("@Resources/") {
+    let translated = crate::compat::translate_path_checked(value)?;
+    let candidate = if let Some(relative) = translated.strip_prefix("@Resources/") {
         skin.root.join("@Resources").join(relative)
     } else {
-        let path = PathBuf::from(value);
+        let path = PathBuf::from(translated);
         if path.is_absolute() {
             path
         } else {
@@ -1849,6 +1856,24 @@ Meter=Shape
         match &model.meters[0] {
             RenderMeter::String { props, .. } => {
                 assert_eq!(props.text.as_deref(), Some("après"));
+            }
+            other => panic!("meter inattendu : {other:?}"),
+        }
+    }
+
+    #[test]
+    fn substitutes_windows_fonts_and_reads_blur() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_skin(
+            dir.path(),
+            "[Petrichor]\nBlur=1\n[MeterTitle]\nMeter=String\nFontFace=Segoe UI\nText=test\n",
+        );
+
+        let (model, _) = build_render_model(&path);
+        assert!(model.blur);
+        match &model.meters[0] {
+            RenderMeter::String { props, .. } => {
+                assert_eq!(props.font_face.as_str(), "Cantarell");
             }
             other => panic!("meter inattendu : {other:?}"),
         }

@@ -661,3 +661,48 @@ fieldset label input:not([type="checkbox"]) {
     padding-top: 1rem;
   }
 }
+
+.compat-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.compat-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.badge.compat-automatic {
+  color: #7fb6e0;
+  border-color: #3d6a8a;
+}
+
+.badge.compat-manual {
+  color: #e0b458;
+  border-color: #8a6d3d;
+}
+
+.badge.compat-unsupported {
+  color: #e08a8a;
+  border-color: #8a3d3d;
+}
+
+.capabilities {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.capability {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}

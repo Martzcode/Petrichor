@@ -360,6 +360,36 @@ export class PetrichorIpc {
     return invoke<SkinDetails>('skin_details', { path });
   }
 
+  async compatibilityCapabilities(): Promise<Capability[]> {
+    if (!this.available()) return [];
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<Capability[]>('compatibility_capabilities');
+  }
+
+  async compatibilityReport(path: string): Promise<CompatReport | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<CompatReport>('compatibility_report', { path });
+  }
+
+  async exportCompatibilityReport(path: string): Promise<string | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<string>('export_compatibility_report', { path });
+  }
+
+  async previewSkinMigration(path: string): Promise<MigrationChange[]> {
+    if (!this.available()) return [];
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<MigrationChange[]>('preview_skin_migration', { path });
+  }
+
+  async migrateSkin(path: string): Promise<MigrationResult | null> {
+    if (!this.available()) return null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<MigrationResult>('migrate_skin_file', { path });
+  }
+
   async updateSkinState(
     path: string,
     patch: SkinStatePatch,
@@ -592,6 +622,46 @@ export interface SkinMetadata {
   license: string | null;
 }
 
+export type CompatLevel = 'native' | 'automatic' | 'manual' | 'unsupported';
+export type CompatPlan = 'A' | 'B' | 'C';
+
+export interface CompatEntry {
+  feature: string;
+  requested: string;
+  resolved: string | null;
+  level: CompatLevel;
+  plan: CompatPlan | null;
+  message: string | null;
+  action: string | null;
+}
+
+export interface CompatReport {
+  skin: string;
+  entries: CompatEntry[];
+}
+
+export interface Capability {
+  id: string;
+  label: string;
+  available: boolean;
+  fallback: boolean;
+  detail: string;
+  hint: string | null;
+}
+
+export interface MigrationChange {
+  line: number;
+  key: string;
+  before: string;
+  after: string;
+}
+
+export interface MigrationResult {
+  path: string;
+  backup: string;
+  changes: MigrationChange[];
+}
+
 export interface SkinDetails {
   path: string;
   name: string;
@@ -600,6 +670,7 @@ export interface SkinDetails {
   state: SkinState;
   favorites: boolean;
   open_label: string | null;
+  compat: CompatReport;
 }
 
 export interface SkinStatePatch {
@@ -657,6 +728,7 @@ export interface ManageSnapshot {
   game_mode: GameModeStatus;
   paths: AppPaths;
   monitors: MonitorInfo[];
+  capabilities: Capability[];
 }
 
 export interface NewSkinSpec {

@@ -161,6 +161,7 @@ export class SkinView implements AfterViewInit, OnDestroy {
     this.baseOpacity =
       Math.min(255, Math.max(0, result.flags.opacity ?? 255)) / 255;
     this.setCanvasOpacity(this.baseOpacity);
+    this.applyBlur(result.model.blur === true);
 
     await this.loadFonts(result.model);
     this.images = await this.loadImages(result.model);
@@ -770,6 +771,16 @@ export class SkinView implements AfterViewInit, OnDestroy {
       width: image.naturalWidth || image.width,
       height: image.naturalHeight || image.height,
     };
+  }
+
+  private applyBlur(enabled: boolean): void {
+    const canvas = this.canvasRef()?.nativeElement;
+    if (!canvas) return;
+    canvas.style.backdropFilter = enabled ? 'blur(8px)' : '';
+    canvas.style.setProperty(
+      '-webkit-backdrop-filter',
+      enabled ? 'blur(8px)' : '',
+    );
   }
 
   private async loadFonts(model: RenderModel): Promise<void> {

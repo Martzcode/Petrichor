@@ -21,6 +21,7 @@ pub struct SkinDetails {
     pub state: SkinState,
     pub favorites: bool,
     pub open_label: Option<String>,
+    pub compat: petrichor_compat::CompatReport,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +34,7 @@ pub struct ManageSnapshot {
     pub game_mode: GameModeStatus,
     pub paths: commands::AppPaths,
     pub monitors: Vec<MonitorInfo>,
+    pub capabilities: Vec<petrichor_compat::Capability>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -99,6 +101,7 @@ pub fn manage_snapshot(app: tauri::AppHandle) -> Result<ManageSnapshot, String> 
         game_mode: crate::gamemode::game_mode_status(app.clone()),
         paths: commands::get_paths(),
         monitors: monitor_infos(&app),
+        capabilities: petrichor_compat::detect_capabilities(),
     })
 }
 
@@ -109,6 +112,7 @@ pub fn skin_details(path: String, app: tauri::AppHandle) -> Result<SkinDetails, 
         return Err(format!("skin introuvable : {}", path.display()));
     }
     let (skin, _) = petrichor_core::build_skin(&path);
+    let compat = petrichor_compat::analyze_skin(&skin);
     let state = persistence::load_state(&path).unwrap_or_default();
     let windows = app.state::<SkinWindows>();
     Ok(SkinDetails {
@@ -118,6 +122,7 @@ pub fn skin_details(path: String, app: tauri::AppHandle) -> Result<SkinDetails, 
         state,
         favorites: storage::is_skin_favorite(&path),
         open_label: windows.find_by_path(&path),
+        compat,
         path,
     })
 }

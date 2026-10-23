@@ -93,6 +93,7 @@ function model(meters: RenderModel['meters']): RenderModel {
     },
     meters,
     local_fonts: [],
+    blur: false,
     measure_values: { cpu: '42' },
   };
 }

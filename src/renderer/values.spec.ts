@@ -107,6 +107,7 @@ function model(): RenderModel {
     },
     meters: [bar(), histogram(), line()],
     local_fonts: [],
+    blur: false,
     measure_values: {},
   };
 }

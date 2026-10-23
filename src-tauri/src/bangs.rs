@@ -967,7 +967,19 @@ fn deactivate_group(app: &AppHandle, windows: &SkinWindows, bang: &Bang) -> Resu
 }
 
 fn spawn_external(bang: &Bang) {
-    if let Err(error) = spawn_detached(&bang.raw_name, &bang.args) {
+    let Some((program, args)) = petrichor_core::compat::translate_exec(&bang.raw_name, &bang.args)
+    else {
+        logging::logger().log(
+            Level::Warning,
+            Some("bang"),
+            format!(
+                "Commande externe {} non traduisible (Wine absent ou commande inconnue)",
+                bang.raw_name
+            ),
+        );
+        return;
+    };
+    if let Err(error) = spawn_detached(&program, &args) {
         logging::logger().log(
             Level::Warning,
             Some("bang"),
@@ -1073,13 +1085,14 @@ fn play_sound(root: Option<&Path>, bang: &Bang, looping: bool, name: &str) {
 }
 
 fn resolve_audio_path(root: Option<&Path>, file: &str) -> String {
-    let path = PathBuf::from(file);
+    let file = petrichor_core::compat::translate_path(file);
+    let path = PathBuf::from(&file);
     if path.is_absolute() {
         path.to_string_lossy().to_string()
     } else if let Some(root) = root {
         root.join(path).to_string_lossy().to_string()
     } else {
-        file.to_string()
+        file
     }
 }
 

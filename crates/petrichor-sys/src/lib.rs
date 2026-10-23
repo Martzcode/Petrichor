@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OsRelease {
@@ -1865,19 +1867,171 @@ pub fn normalize_registry_path(path: &str) -> String {
 }
 
 fn registry_value(path: &str) -> Option<String> {
-    let file = std::env::var_os("PETRICHOR_REGISTRY")
+    let normalized = normalize_registry_path(path);
+    if let Some(value) = compat_override("registry", &normalized) {
+        return Some(value);
+    }
+    let mut files = Vec::new();
+    if let Some(file) = std::env::var_os("PETRICHOR_REGISTRY") {
+        files.push(PathBuf::from(file));
+    }
+    if let Some(base) = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .or_else(|| {
-                    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
-                })
-                .map(|base| base.join("petrichor").join("registry.json"))
-        })?;
-    let text = fs::read_to_string(file).ok()?;
-    let values: BTreeMap<String, String> = serde_json::from_str(&text).ok()?;
-    registry_lookup(&values, path)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+    {
+        files.push(base.join("petrichor").join("registry.json"));
+        files.push(base.join("Petrichor").join("registry.json"));
+    }
+    files.push(PathBuf::from("/etc/petrichor/registry.json"));
+    for file in files {
+        if let Ok(text) = fs::read_to_string(file) {
+            if let Ok(values) = serde_json::from_str::<BTreeMap<String, String>>(&text) {
+                if let Some(value) = registry_lookup(&values, &normalized) {
+                    return Some(value);
+                }
+            }
+        }
+    }
+    if let Some(value) = default_registry_value(&normalized) {
+        return Some(value);
+    }
+    gsettings_registry_value(&normalized)
+}
+
+fn default_registry_value(path: &str) -> Option<String> {
+    let key = path.to_ascii_uppercase();
+    let release = OsRelease::read();
+    let locale = std::env::var("LANG")
+        .unwrap_or_else(|_| "en_US.UTF-8".to_string())
+        .split('.')
+        .next()
+        .unwrap_or("en_US")
+        .to_string();
+    let value = match key.as_str() {
+        "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS NT\\CURRENTVERSION\\PRODUCTNAME" => {
+            release.name
+        }
+        "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS NT\\CURRENTVERSION\\CURRENTVERSION" => {
+            release.version
+        }
+        "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS NT\\CURRENTVERSION\\CURRENTBUILD" => {
+            fs::read_to_string("/proc/sys/kernel/osrelease")
+                .map(|value| value.trim().to_string())
+                .unwrap_or_else(|_| "0".to_string())
+        }
+        "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS NT\\CURRENTVERSION\\UBR" => "0".to_string(),
+        "HKCU\\CONTROL PANEL\\INTERNATIONAL\\LOCALENAME" => locale,
+        "HKCU\\CONTROL PANEL\\INTERNATIONAL\\SLANGUAGE" => {
+            locale.replace('_', "-")
+        }
+        "HKCU\\CONTROL PANEL\\INTERNATIONAL\\ICOUNTRY" => "0".to_string(),
+        "HKCU\\CONTROL PANEL\\DESKTOP\\WALLPAPERSTYLE" => "10".to_string(),
+        "HKCU\\CONTROL PANEL\\COLORS\\BACKGROUND" => "0 0 0".to_string(),
+        "HKCU\\CONTROL PANEL\\DESKTOP\\WALLPAPER" => {
+            let uri = gsettings_get("org.gnome.desktop.background", "picture-uri")?;
+            uri.trim_matches('"')
+                .strip_prefix("file://")
+                .unwrap_or(uri.trim_matches('"'))
+                .to_string()
+        }
+        "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\THEMES\\PERSONALIZE\\APPSUSELIGHTTHEME"
+        | "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\THEMES\\PERSONALIZE\\SYSTEMUSESLIGHTTHEME" => {
+            let scheme = gsettings_get("org.gnome.desktop.interface", "color-scheme")
+                .unwrap_or_default();
+            if scheme.contains("prefer-dark") { "0" } else { "1" }.to_string()
+        }
+        "HKCU\\ENVIRONMENT\\TEMP" | "HKCU\\ENVIRONMENT\\TMP" => {
+            std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
+        }
+        "HKCU\\ENVIRONMENT\\USERPROFILE" => std::env::var("HOME").ok()?,
+        "HKCU\\VOLATILE ENVIRONMENT\\APPDATA" => std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .or_else(|| std::env::var("HOME").ok().map(|home| format!("{home}/.config")))?,
+        "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\EXPLORER\\SHELL FOLDERS\\PERSONAL" => {
+            std::env::var("HOME").ok()?
+        }
+        _ => return None,
+    };
+    Some(value)
+}
+
+fn gsettings_registry_value(path: &str) -> Option<String> {
+    let key = path.to_ascii_uppercase();
+    match key.as_str() {
+        "HKCU\\CONTROL PANEL\\DESKTOP\\WALLPAPER" => {
+            let uri = gsettings_get("org.gnome.desktop.background", "picture-uri")?;
+            Some(
+                uri.trim_matches('"')
+                    .strip_prefix("file://")
+                    .unwrap_or(uri.trim_matches('"'))
+                    .to_string(),
+            )
+        }
+        "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\THEMES\\PERSONALIZE\\APPSUSELIGHTTHEME"
+        | "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\THEMES\\PERSONALIZE\\SYSTEMUSESLIGHTTHEME" => {
+            let scheme = gsettings_get("org.gnome.desktop.interface", "color-scheme")
+                .unwrap_or_default();
+            Some(if scheme.contains("prefer-dark") { "0" } else { "1" }.to_string())
+        }
+        _ => None,
+    }
+}
+
+type SettingsCache = Mutex<BTreeMap<String, (Instant, Option<String>)>>;
+
+fn gsettings_get(schema: &str, key: &str) -> Option<String> {
+    static CACHE: OnceLock<SettingsCache> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let cache_key = format!("{schema} {key}");
+    if let Ok(cache) = cache.lock() {
+        if let Some((at, value)) = cache.get(&cache_key) {
+            if at.elapsed() < Duration::from_secs(5) {
+                return value.clone();
+            }
+        }
+    }
+    let value = std::process::Command::new("gsettings")
+        .arg("get")
+        .arg(schema)
+        .arg(key)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(cache_key, (Instant::now(), value.clone()));
+    }
+    value
+}
+
+fn compat_override(section: &str, key: &str) -> Option<String> {
+    use std::sync::OnceLock;
+
+    static VALUES: OnceLock<Option<serde_json::Value>> = OnceLock::new();
+    let values = VALUES.get_or_init(|| {
+        let path = std::env::var_os("PETRICHOR_COMPAT")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("XDG_CONFIG_HOME")
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
+                    })
+                    .map(|base| base.join("Petrichor").join("compat.json"))
+            })?;
+        let text = fs::read_to_string(path).ok()?;
+        serde_json::from_str(&text).ok()
+    });
+    let values = values.as_ref()?;
+    let wanted = key.to_ascii_lowercase();
+    values
+        .get(section)?
+        .as_object()?
+        .iter()
+        .find(|(name, _)| name.to_ascii_lowercase() == wanted)
+        .and_then(|(_, value)| value.as_str().map(str::to_string))
 }
 
 fn registry_lookup(values: &BTreeMap<String, String>, path: &str) -> Option<String> {
@@ -1996,21 +2150,44 @@ fn bus_suffix(bus_name: &str) -> String {
         .to_string()
 }
 
+const MPRIS_ALIASES: &[(&str, &str)] = &[
+    ("winamp", "audacious"),
+    ("wmp", "vlc"),
+    ("windows media player", "vlc"),
+    ("itunes", "rhythmbox"),
+    ("mediamonkey", "deadbeef"),
+    ("musicbee", "musicbee"),
+    ("aimp", "aimp"),
+    ("foobar2000", "foobar2000"),
+    ("spotify", "spotify"),
+    ("vlc", "vlc"),
+    ("mpd", "mpd"),
+    ("deezer", "deezer"),
+    ("tidal", "tidal"),
+    ("youtube music", "youtube-music"),
+];
+
+fn mpris_alias(requested: &str) -> Option<&'static str> {
+    let wanted = requested.trim().to_ascii_lowercase();
+    MPRIS_ALIASES
+        .iter()
+        .find(|(name, _)| *name == wanted)
+        .map(|(_, target)| *target)
+}
+
 fn mpris_match(requested: &str, player: &MediaPlayerInfo) -> bool {
     let wanted = requested.trim().to_ascii_lowercase();
-    if wanted.is_empty()
-        || matches!(
-            wanted.as_str(),
-            "best" | "default" | "wlm" | "winamp" | "wmp" | "itunes" | "mediamonkey"
-        )
-    {
+    if wanted.is_empty() || matches!(wanted.as_str(), "best" | "default" | "wlm") {
         return false;
     }
+    let wanted = compat_override("players", &wanted)
+        .or_else(|| mpris_alias(&wanted).map(str::to_string))
+        .unwrap_or(wanted);
     let bus = player.bus_name.to_ascii_lowercase();
     bus.ends_with(&format!(".{wanted}"))
-        || player.identity.eq_ignore_ascii_case(requested)
-        || player.desktop_entry.eq_ignore_ascii_case(requested)
-        || bus_suffix(&player.bus_name).eq_ignore_ascii_case(requested)
+        || player.identity.eq_ignore_ascii_case(&wanted)
+        || player.desktop_entry.eq_ignore_ascii_case(&wanted)
+        || bus_suffix(&player.bus_name).eq_ignore_ascii_case(&wanted)
 }
 
 fn mpris_select(players: &[MediaPlayerInfo], requested: &str) -> Option<MediaPlayerInfo> {
@@ -2642,6 +2819,19 @@ mod tests {
     }
 
     #[test]
+    fn resolves_linux_registry_defaults() {
+        assert!(default_registry_value(
+            "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProductName"
+        )
+        .is_some_and(|value| !value.is_empty()));
+        assert_eq!(
+            default_registry_value("HKCU\\Control Panel\\Desktop\\WallpaperStyle").as_deref(),
+            Some("10")
+        );
+        assert!(default_registry_value("HKLM\\Missing").is_none());
+    }
+
+    #[test]
     fn parses_xrandr_monitors() {
         let text = "Monitors: 3\n 0: +*eDP-1 1920/344x1080/193+0+0  eDP-1\n 1: +HDMI-1 1280/300x720/200+1920+0  HDMI-1\n 2: +DP-1 1280/300x720/200-1280+0  DP-1\n";
         let monitors = parse_xrandr_monitors(text);
@@ -2707,6 +2897,21 @@ mod tests {
                 .expect("lecteur BEST")
                 .bus_name,
             "org.mpris.MediaPlayer2.spotify"
+        );
+        let alias_players = vec![
+            MediaPlayerInfo {
+                bus_name: "org.mpris.MediaPlayer2.audacious".to_string(),
+                identity: "Audacious".to_string(),
+                desktop_entry: "audacious".to_string(),
+                status: "Paused".to_string(),
+            },
+            players[1].clone(),
+        ];
+        assert_eq!(
+            mpris_select(&alias_players, "Winamp")
+                .expect("alias Winamp")
+                .bus_name,
+            "org.mpris.MediaPlayer2.audacious"
         );
         let info = NowPlayingInfo {
             status: "Paused".to_string(),

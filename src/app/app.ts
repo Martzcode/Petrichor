@@ -23,6 +23,7 @@ import {
   SkinFolder,
   SkinStatePatch,
   SkinWindowInfo,
+  CompatLevel,
   UpdateStatus,
 } from '../shared/ipc';
 
@@ -136,6 +137,87 @@ export class App implements OnInit {
   protected async selectSkin(path: string): Promise<void> {
     await this.run('Chargement du skin', async () => {
       this.details.set(await this.ipc.skinDetails(path));
+    });
+  }
+
+  protected compatLevelLabel(level: CompatLevel): string {
+    switch (level) {
+      case 'native':
+        return 'Natif';
+      case 'automatic':
+        return 'Adapté automatiquement';
+      case 'manual':
+        return 'Adaptation manuelle';
+      case 'unsupported':
+        return 'Non supporté';
+    }
+  }
+
+  protected compatPlanLabel(plan: string): string {
+    return `Plan ${plan}`;
+  }
+
+  protected compatConfigPath(): string {
+    const config = this.snapshot()?.paths.config;
+    if (!config) return 'compat.json';
+    const separator = config.includes('\\') ? '\\' : '/';
+    return `${config.slice(0, config.lastIndexOf(separator))}${separator}compat.json`;
+  }
+
+  protected compatCount(): number {
+    return (
+      this.details()?.compat.entries.filter((entry) => entry.level !== 'native')
+        .length ?? 0
+    );
+  }
+
+  protected compatBadgeLevel(): CompatLevel {
+    const levels =
+      this.details()?.compat.entries.map((entry) => entry.level) ?? [];
+    for (const level of [
+      'unsupported',
+      'manual',
+      'automatic',
+    ] as CompatLevel[]) {
+      if (levels.includes(level)) return level;
+    }
+    return 'native';
+  }
+
+  protected async exportCompatReport(): Promise<void> {
+    const details = this.details();
+    if (!details) return;
+    await this.run('Export du rapport', async () => {
+      const path = await this.ipc.exportCompatibilityReport(details.path);
+      if (!path) throw new Error('Backend Petrichor indisponible.');
+      this.notice.set(`Rapport de compatibilité exporté : ${path}`);
+    });
+  }
+
+  protected async migrateCurrentSkin(): Promise<void> {
+    const details = this.details();
+    if (!details) return;
+    await this.run('Migration du skin', async () => {
+      const preview = await this.ipc.previewSkinMigration(details.path);
+      if (!preview.length) {
+        this.notice.set('Aucune migration nécessaire.');
+        return;
+      }
+      const sample = preview
+        .slice(0, 4)
+        .map((change) => `L${change.line} ${change.before} → ${change.after}`)
+        .join('\n');
+      const confirmed = window.confirm(
+        `${preview.length} remplacement(s) seront appliqués :\n${sample}\n\nUne sauvegarde .petrichor.bak sera créée.`,
+      );
+      if (!confirmed) return;
+      const result = await this.ipc.migrateSkin(details.path);
+      if (!result) throw new Error('Backend Petrichor indisponible.');
+      this.details.set(await this.ipc.skinDetails(details.path));
+      await this.refreshSnapshot();
+      this.notice.set(
+        `${result.changes.length} remplacement(s), sauvegarde ${result.backup}`,
+      );
     });
   }
 

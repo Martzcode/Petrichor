@@ -961,7 +961,7 @@ pub fn create_plugin_measure(
     Some(Box::new(IsolatedPluginMeasure::new(path)))
 }
 
-fn plugin_module_name(name: &str) -> String {
+pub fn plugin_module_name(name: &str) -> String {
     let name = Path::new(name)
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
@@ -1062,11 +1062,12 @@ impl RunCommandMeasure {
             return None;
         }
         let parameter = context.option_or("Parameter", "");
-        if parameter.trim().is_empty() {
-            Some(program)
+        let command = if parameter.trim().is_empty() {
+            program
         } else {
-            Some(format!("{program} {parameter}"))
-        }
+            format!("{program} {parameter}")
+        };
+        crate::compat::translate_shell_command(&command)
     }
 
     fn start(&mut self, context: &RuntimeContext<'_>) -> bool {
