@@ -129,6 +129,67 @@ describe('layoutSkin', () => {
     expect(layout.boxes[2].x).toBe(37);
   });
 
+  it('centers strings on their X anchor', () => {
+    const layout = layoutSkin(
+      model([
+        stringMeter({
+          text: 'hello',
+          x: { value: 200, relative: 'absolute' },
+          string_align: 'CENTER',
+        }),
+      ]),
+      measure(40, 12),
+    );
+    const box = layout.boxes[0];
+    expect(box.x).toBe(180);
+    expect(box.text?.x).toBe(200);
+    expect(box.text?.runs[0].x).toBe(180);
+  });
+
+  it('right-aligns strings on their X anchor', () => {
+    const layout = layoutSkin(
+      model([
+        stringMeter({
+          text: 'hello',
+          x: { value: 200, relative: 'absolute' },
+          string_align: 'RIGHT',
+        }),
+      ]),
+      measure(40, 12),
+    );
+    const box = layout.boxes[0];
+    expect(box.x).toBe(160);
+    expect(box.text?.runs[0].x).toBe(160);
+  });
+
+  it('treats Center as CenterTop and CenterCenter as vertical middle', () => {
+    const top = layoutSkin(
+      model([
+        stringMeter({
+          text: 'hello',
+          y: { value: 10, relative: 'absolute' },
+          string_align: 'CENTER',
+        }),
+      ]),
+      measure(40, 12),
+    ).boxes[0];
+    const middle = layoutSkin(
+      model([
+        stringMeter({
+          text: 'hello',
+          y: { value: 10, relative: 'absolute' },
+          string_align: 'CENTERCENTER',
+        }),
+      ]),
+      measure(40, 12),
+    ).boxes[0];
+
+    expect(top.y).toBe(10);
+    expect(top.text?.y).toBe(10);
+    expect(middle.y).toBe(4);
+    expect(middle.text?.y).toBe(10);
+  });
+
   it('applies padding to content', () => {
     const layout = layoutSkin(
       model([stringMeter({ padding: [4, 2, 6, 8] })]),
@@ -159,6 +220,16 @@ describe('layoutSkin', () => {
     );
     expect(layout.boxes[0].width).toBe(0);
     expect(layout.boxes[0].height).toBe(0);
+  });
+
+  it('derives image height from its width and aspect ratio', () => {
+    const layout = layoutSkin(
+      model([imageMeter({ width: 80 })]),
+      measure(0, 0),
+      () => ({ width: 160, height: 40 }),
+    );
+    expect(layout.boxes[0].width).toBe(80);
+    expect(layout.boxes[0].height).toBe(20);
   });
 
   it('uses image dimensions when available', () => {

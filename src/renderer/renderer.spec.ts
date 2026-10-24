@@ -406,6 +406,7 @@ function render(
   getImage: (path: string) => CanvasImageSource | null = () => null,
   hovered: string | null = null,
   pressed: string | null = null,
+  values: Record<string, string> = {},
 ): FakeContext {
   const context = new FakeContext();
   const fake = context as unknown as CanvasRenderingContext2D;
@@ -413,7 +414,11 @@ function render(
     width: text.length * 6,
     height: meter.font_size,
   }));
-  renderSkin(fake, skin, layout, getImage, histories, { hovered, pressed });
+  renderSkin(fake, skin, layout, getImage, histories, {
+    hovered,
+    pressed,
+    values,
+  });
   return context;
 }
 
@@ -491,6 +496,29 @@ describe('renderSkin', () => {
     const context = render(model([rotatorMeter()]), new Map(), () => IMAGE);
     expect(context.of('translate').length).toBe(1);
     expect(context.of('rotate').length).toBe(1);
+    expect(context.of('drawImage').length).toBe(1);
+  });
+
+  it('selects a dynamic image variant from measure values', () => {
+    const paths: string[] = [];
+    const context = render(
+      model([
+        imageMeter({
+          image: null,
+          image_measure: 'WeatherIcon',
+          image_variants: ['/tmp/0.png', '/tmp/1.png'],
+        }),
+      ]),
+      new Map(),
+      (path) => {
+        paths.push(path);
+        return IMAGE;
+      },
+      null,
+      null,
+      { WeatherIcon: '1' },
+    );
+    expect(paths).toEqual(['/tmp/1.png']);
     expect(context.of('drawImage').length).toBe(1);
   });
 

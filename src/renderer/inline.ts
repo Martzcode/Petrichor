@@ -1,5 +1,7 @@
 import { Color, StringMeter } from './skin-model';
 
+export const POINTS_TO_PIXELS = 96 / 72;
+
 export interface GradientStop {
   position: number;
   color: Color;
@@ -53,7 +55,7 @@ export function baseStyle(meter: StringMeter): TextStyle {
   return {
     color: meter.font_color,
     face: meter.font_face,
-    size: meter.font_size,
+    size: meter.font_size * POINTS_TO_PIXELS,
     weight:
       meter.font_weight > 0
         ? meter.font_weight
@@ -80,14 +82,22 @@ export function buildTextRuns(meter: StringMeter, text: string): TextRun[] {
     caseMode: CaseMode | null;
   }[] = [];
 
-  for (
-    let index = 0;
-    index < Math.min(settings.length, patterns.length);
-    index += 1
-  ) {
+  for (let index = 0; index < settings.length; index += 1) {
     const parsed = parseSetting(settings[index]);
     if (!parsed) continue;
-    const regex = compilePattern(patterns[index]);
+    const pattern = patterns[index];
+    if (!pattern) {
+      if (text) {
+        ranges.push({
+          start: 0,
+          end: text.length,
+          style: parsed.style,
+          caseMode: parsed.caseMode,
+        });
+      }
+      continue;
+    }
+    const regex = compilePattern(pattern);
     if (!regex) continue;
     collectRanges(text, regex, parsed, ranges);
   }
@@ -201,7 +211,9 @@ function parseSetting(value: string): ParsedSetting | null {
   const name = (
     separator < 0 ? trimmed : trimmed.slice(0, separator)
   ).toUpperCase();
-  const argument = separator < 0 ? '' : trimmed.slice(separator + 1).trim();
+  const argument = (
+    separator < 0 ? '' : trimmed.slice(separator + 1).trim()
+  ).replace(/^\|\s*/, '');
 
   switch (name) {
     case 'NONE':
@@ -226,7 +238,9 @@ function parseSetting(value: string): ParsedSetting | null {
       return argument ? { style: { face: argument }, caseMode: null } : null;
     case 'SIZE': {
       const size = Number.parseFloat(argument);
-      return Number.isFinite(size) ? { style: { size }, caseMode: null } : null;
+      return Number.isFinite(size)
+        ? { style: { size: size * POINTS_TO_PIXELS }, caseMode: null }
+        : null;
     }
     case 'WEIGHT': {
       const weight = Number.parseInt(argument, 10);
@@ -242,7 +256,7 @@ function parseSetting(value: string): ParsedSetting | null {
     case 'STRIKETHROUGH':
       return { style: { strikethrough: true }, caseMode: null };
     case 'SHADOW': {
-      const parts = argument.split(',').map((part) => part.trim());
+      const parts = splitArguments(argument);
       if (parts.length < 4) return null;
       const [offsetX, offsetY, blur] = parts.slice(0, 3).map(Number.parseFloat);
       const color = parseColor(parts[3]);
@@ -255,7 +269,7 @@ function parseSetting(value: string): ParsedSetting | null {
       };
     }
     case 'CHARACTERSPACING': {
-      const parts = argument.split(',').map((part) => part.trim());
+      const parts = splitArguments(argument);
       const leading =
         parts[0] && parts[0] !== '*' ? Number.parseFloat(parts[0]) : 0;
       const trailing =
@@ -282,6 +296,12 @@ function parseSetting(value: string): ParsedSetting | null {
     default:
       return null;
   }
+}
+
+function splitArguments(value: string): string[] {
+  return (value.includes('|') ? value.split('|') : value.split(','))
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
 }
 
 function parseGradient(value: string): GradientStyle | null {

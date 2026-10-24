@@ -417,14 +417,28 @@ impl MeasureState {
         sections: Arc<BTreeMap<String, BTreeMap<String, String>>>,
         now_players: Arc<Mutex<BTreeMap<String, String>>>,
     ) -> Self {
-        let kind = measure.kind.trim().to_ascii_uppercase();
+        let mut kind = measure.kind.trim().to_ascii_uppercase();
         let runtime = match kind.as_str() {
-            "PLUGIN" => crate::plugins::create_plugin_measure(
-                measure,
-                &skin.name,
-                &skin.root,
-                &skin.ini_path,
-            ),
+            "PLUGIN" => {
+                let module = measure
+                    .options
+                    .get("Plugin")
+                    .map(crate::plugins::plugin_module_name)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                match crate::plugins::native_measure_kind(&module) {
+                    Some(native) => {
+                        kind = native.to_string();
+                        None
+                    }
+                    None => crate::plugins::create_plugin_measure(
+                        measure,
+                        &skin.name,
+                        &skin.root,
+                        &skin.ini_path,
+                    ),
+                }
+            }
             "SCRIPT" => crate::plugins::create_script_measure(measure, &skin.root),
             _ => None,
         }
@@ -2773,6 +2787,39 @@ mod tests {
         assert_eq!(report.strings["Ssid"], "Home");
         assert_eq!(report.strings["Quality"], "72");
         assert_eq!(report.strings["List"], "Home [72]");
+    }
+
+    #[test]
+    fn maps_rainmeter_builtin_plugin_measures() {
+        let backend = MockBackend {
+            sysinfo: Some(SysInfoValue::text("example.org")),
+            ..MockBackend::new()
+        };
+        let mut engine = MeasureEngine::new(&skin(vec![
+            measure(
+                "Plugin",
+                "Connectivity",
+                &[
+                    ("Plugin", "SysInfo"),
+                    ("SysInfoType", "INTERNET_CONNECTIVITY"),
+                ],
+            ),
+            measure(
+                "Plugin",
+                "Domain",
+                &[("Plugin", "SysInfo.dll"), ("SysInfoType", "DOMAIN_NAME")],
+            ),
+            measure(
+                "Plugin",
+                "Web",
+                &[("Plugin", "WebParser.dll"), ("Url", "http://example.org/")],
+            ),
+        ]));
+        assert_eq!(engine.measure_kind("Connectivity"), Some("SYSINFO"));
+        assert_eq!(engine.measure_kind("Domain"), Some("SYSINFO"));
+        assert_eq!(engine.measure_kind("Web"), Some("WEBPARSER"));
+        let report = engine.update(&backend, fixed_now());
+        assert_eq!(report.strings["Domain"], "example.org");
     }
 
     #[test]

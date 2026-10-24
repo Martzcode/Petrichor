@@ -17,14 +17,36 @@ pub fn resolve(entry: &Path, skin_root: &Path) -> IncludeResult {
     let mut result = IncludeResult::default();
     let mut stack: Vec<PathBuf> = Vec::new();
     let mut variables: BTreeMap<String, String> = BTreeMap::new();
-    merge_file(entry, skin_root, 0, &mut stack, &mut variables, &mut result);
+    let resources_root = find_resources_root(skin_root);
+    merge_file(
+        entry,
+        skin_root,
+        &resources_root,
+        0,
+        &mut stack,
+        &mut variables,
+        &mut result,
+    );
     result
+}
+
+pub fn find_resources_root(skin_root: &Path) -> PathBuf {
+    let mut current = Some(skin_root);
+    while let Some(dir) = current {
+        let candidate = dir.join("@Resources");
+        if candidate.is_dir() {
+            return candidate;
+        }
+        current = dir.parent();
+    }
+    skin_root.join("@Resources")
 }
 
 #[allow(clippy::too_many_arguments)]
 fn merge_file(
     path: &Path,
     skin_root: &Path,
+    resources_root: &Path,
     depth: usize,
     stack: &mut Vec<PathBuf>,
     variables: &mut BTreeMap<String, String>,
@@ -75,10 +97,11 @@ fn merge_file(
     let includes = collect_includes(&document);
     for raw in includes {
         let expanded = expand_string(&raw, variables);
-        let include_path = resolve_path(&expanded, skin_root);
+        let include_path = resolve_path(&expanded, skin_root, resources_root);
         merge_file(
             &include_path,
             skin_root,
+            resources_root,
             depth + 1,
             stack,
             variables,
@@ -152,14 +175,20 @@ fn merge_sections(target: &mut IniDocument, source: &IniDocument) {
     }
 }
 
-fn resolve_path(value: &str, skin_root: &Path) -> PathBuf {
+fn resolve_path(value: &str, skin_root: &Path, resources_root: &Path) -> PathBuf {
     let trimmed = value.trim().trim_matches('"').trim();
-    let candidate = Path::new(trimmed);
+    let normalized = trimmed.replace('\\', "/");
+    let candidate = Path::new(&normalized);
     if candidate.is_absolute() {
-        candidate.to_path_buf()
-    } else {
-        skin_root.join(candidate)
+        return candidate.to_path_buf();
     }
+    if let Some(relative) = normalized
+        .strip_prefix("@Resources/")
+        .or_else(|| (normalized == "@Resources").then_some(""))
+    {
+        return resources_root.join(relative);
+    }
+    skin_root.join(candidate)
 }
 
 fn expand_string(input: &str, variables: &BTreeMap<String, String>) -> String {
@@ -168,6 +197,11 @@ fn expand_string(input: &str, variables: &BTreeMap<String, String>) -> String {
     let mut i = 0usize;
     while i < chars.len() {
         let ch = chars[i];
+        if ch == '#' && chars.get(i + 1) == Some(&'@') && chars.get(i + 2) == Some(&'#') {
+            output.push_str("@Resources/");
+            i += 3;
+            continue;
+        }
         if ch == '#' {
             if let Some(offset) = chars[i + 1..].iter().position(|&c| c == '#') {
                 let name: String = chars[i + 1..i + 1 + offset].iter().collect();
@@ -287,6 +321,55 @@ mod tests {
         let result = resolve(&dir.path().join("main.ini"), dir.path());
         assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
         assert_eq!(result.document.get("Extra", "Key"), Some("1"));
+    }
+
+    #[test]
+    fn resolves_resources_prefix_and_windows_separators() {
+        let dir = tempfile::tempdir().unwrap();
+        let resources = dir.path().join("@Resources");
+        fs::create_dir_all(resources.join("Language")).unwrap();
+        fs::write(
+            resources.join("Variables.inc"),
+            "[Variables]\nLanguage=fr-FR\n",
+        )
+        .unwrap();
+        fs::write(
+            resources.join("Language").join("fr-FR.inc"),
+            "[Labels]\nHello=Bonjour\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("main.ini"),
+            "[Variables]\n@include=#@#Variables.inc\n@include2=#@#Language\\#Language#.inc\n",
+        )
+        .unwrap();
+
+        let result = resolve(&dir.path().join("main.ini"), dir.path());
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        assert_eq!(result.document.get("Labels", "Hello"), Some("Bonjour"));
+    }
+
+    #[test]
+    fn resolves_resources_from_parent_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let resources = dir.path().join("@Resources");
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(
+            resources.join("Variables.inc"),
+            "[Variables]\nAccent=FF0000\n",
+        )
+        .unwrap();
+        let skin = dir.path().join("Weather");
+        fs::create_dir_all(&skin).unwrap();
+        fs::write(
+            skin.join("main.ini"),
+            "[Variables]\n@include=#@#Variables.inc\n",
+        )
+        .unwrap();
+
+        let result = resolve(&skin.join("main.ini"), &skin);
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        assert_eq!(result.document.get("Variables", "Accent"), Some("FF0000"));
     }
 
     #[test]

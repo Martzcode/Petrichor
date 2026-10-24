@@ -264,7 +264,6 @@ pub fn open_window(
         .decorations(false)
         .shadow(false)
         .skip_taskbar(true)
-        .resizable(false)
         .inner_size(200.0, 100.0)
         .position(100.0, 100.0)
         .visible(false);

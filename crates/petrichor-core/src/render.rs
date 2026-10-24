@@ -4,14 +4,13 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::diagnostics::Diagnostics;
+use crate::ini::unquote;
 use crate::ini::IniDocument;
 use crate::measure::MeasureEngine;
 use crate::model::{
     build_skin_with_document, build_skin_with_overrides, BackgroundMode, ContextItem, Meter, Skin,
 };
-use crate::readers::{
-    read_bool, read_color, read_f32, read_floats, read_i32, read_u32, try_read_rect_ltrb, Color,
-};
+use crate::readers::{read_bool, read_color, read_floats, try_read_rect_ltrb, Color};
 use crate::reference::MeasureValue;
 use crate::style::resolved_options;
 use crate::variables::Variables;
@@ -44,7 +43,7 @@ impl Dimension {
             (trimmed, Relative::Absolute)
         };
         Dimension {
-            value: body.trim().parse::<f64>().unwrap_or(0.0),
+            value: number(body).unwrap_or(0.0),
             relative,
         }
     }
@@ -116,6 +115,9 @@ pub struct StringMeter {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ImageMeter {
     pub image: Option<PathBuf>,
+    pub image_path: Option<PathBuf>,
+    pub image_measure: Option<String>,
+    pub image_variants: Vec<PathBuf>,
     pub preserve_aspect_ratio: u8,
     pub tile: bool,
     pub scale_margins: [f32; 4],
@@ -501,7 +503,36 @@ fn opt(options: &[(String, String)], variables: &Variables, key: &str) -> Option
     options
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case(key))
-        .map(|(_, value)| variables.expand(value))
+        .map(|(_, value)| unquote(&variables.expand(value)))
+}
+
+fn number(value: &str) -> Option<f64> {
+    let trimmed = unquote(value);
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(value) = trimmed.parse::<f64>() {
+        return Some(value);
+    }
+    crate::readers::is_formula(&trimmed)
+        .then(|| crate::formula::evaluate(&trimmed).ok())
+        .flatten()
+}
+
+fn read_number_f32(value: &str, default: f32) -> f32 {
+    number(value).map(|value| value as f32).unwrap_or(default)
+}
+
+fn read_number_i32(value: &str, default: i32) -> i32 {
+    number(value)
+        .map(|value| value.trunc() as i32)
+        .unwrap_or(default)
+}
+
+fn read_number_u32(value: &str, default: u32) -> u32 {
+    number(value)
+        .and_then(|value| (value >= 0.0).then_some(value.trunc() as u32))
+        .unwrap_or(default)
 }
 
 const MOUSE_ACTIONS: [&str; 21] = [
@@ -567,8 +598,12 @@ fn build_common(
         y: opt(options, variables, "Y")
             .map(|value| Dimension::parse(&value))
             .unwrap_or_default(),
-        width: opt(options, variables, "W").and_then(|value| value.trim().parse().ok()),
-        height: opt(options, variables, "H").and_then(|value| value.trim().parse().ok()),
+        width: opt(options, variables, "W")
+            .and_then(|value| number(&value))
+            .map(|value| value.round() as i32),
+        height: opt(options, variables, "H")
+            .and_then(|value| number(&value))
+            .map(|value| value.round() as i32),
         padding,
         hidden: opt(options, variables, "Hidden")
             .map(|value| read_bool(&value, false))
@@ -578,7 +613,7 @@ fn build_common(
         solid_color2: opt(options, variables, "SolidColor2")
             .map(|value| read_color(&value, Color::TRANSPARENT)),
         gradient_angle: opt(options, variables, "GradientAngle")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
         group: opt(options, variables, "Group")
             .map(|value| split_list(&value))
@@ -622,7 +657,7 @@ fn build_common(
         tooltip_title: opt(options, variables, "ToolTipTitle"),
         tooltip_icon: opt(options, variables, "ToolTipIcon"),
         tooltip_width: opt(options, variables, "ToolTipWidth")
-            .map(|value| read_u32(&value, 1000))
+            .map(|value| read_number_u32(&value, 1000))
             .unwrap_or(1000),
         tooltip_type: opt(options, variables, "ToolTipType")
             .map(|value| read_bool(&value, false))
@@ -642,13 +677,13 @@ fn build_string(options: &[(String, String)], variables: &Variables) -> StringMe
             crate::compat::substitute_font(&face).unwrap_or(face)
         },
         font_size: opt(options, variables, "FontSize")
-            .map(|value| read_f32(&value, 10.0))
+            .map(|value| read_number_f32(&value, 10.0))
             .unwrap_or(10.0),
         font_color: opt(options, variables, "FontColor")
             .map(|value| read_color(&value, Color::BLACK))
             .unwrap_or(Color::BLACK),
         font_weight: opt(options, variables, "FontWeight")
-            .map(|value| read_i32(&value, -1))
+            .map(|value| read_number_i32(&value, -1))
             .unwrap_or(-1),
         string_align: opt(options, variables, "StringAlign")
             .unwrap_or_else(|| "LEFT".to_string())
@@ -669,10 +704,10 @@ fn build_string(options: &[(String, String)], variables: &Variables) -> StringMe
         prefix: opt(options, variables, "Prefix").unwrap_or_default(),
         postfix: opt(options, variables, "Postfix").unwrap_or_default(),
         num_of_decimals: opt(options, variables, "NumOfDecimals")
-            .map(|value| read_i32(&value, -1))
+            .map(|value| read_number_i32(&value, -1))
             .unwrap_or(-1),
         angle: opt(options, variables, "Angle")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
         inline_settings: collect_indexed(options, variables, "InlineSetting"),
         inline_patterns: collect_indexed(options, variables, "InlinePattern"),
@@ -683,6 +718,22 @@ fn build_image(skin: &Skin, options: &[(String, String)], variables: &Variables)
     let image = opt(options, variables, "ImageName")
         .filter(|value| !value.trim().is_empty())
         .and_then(|value| resolve_asset(skin, value.trim(), &IMAGE_EXTENSIONS));
+
+    let mut image_path = None;
+    let mut image_measure = None;
+    let mut image_variants = Vec::new();
+    if image.is_none() {
+        if let Some(path) = opt(options, variables, "Path")
+            .filter(|value| !value.trim().is_empty())
+            .and_then(|value| resolve_asset_dir(skin, value.trim()))
+        {
+            image_measure = first_measure_name(options, variables);
+            if image_measure.is_some() {
+                image_variants = collect_image_variants(&path);
+                image_path = Some(path);
+            }
+        }
+    }
 
     let scale_margins = opt(options, variables, "ScaleMargins")
         .map(|value| {
@@ -696,8 +747,11 @@ fn build_image(skin: &Skin, options: &[(String, String)], variables: &Variables)
 
     ImageMeter {
         image,
+        image_path,
+        image_measure,
+        image_variants,
         preserve_aspect_ratio: opt(options, variables, "PreserveAspectRatio")
-            .map(|value| read_u32(&value, 0) as u8)
+            .map(|value| read_number_u32(&value, 0) as u8)
             .unwrap_or(0),
         tile: opt(options, variables, "Tile")
             .map(|value| read_bool(&value, false))
@@ -752,7 +806,7 @@ fn build_image(skin: &Skin, options: &[(String, String)], variables: &Variables)
             .trim()
             .to_ascii_uppercase(),
         rotate: opt(options, variables, "Rotate")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
     }
 }
@@ -783,7 +837,7 @@ fn build_bar(
             .map(|value| read_bool(&value, false))
             .unwrap_or(false),
         border: opt(options, variables, "BarBorder")
-            .map(|value| read_u32(&value, 0))
+            .map(|value| read_number_u32(&value, 0))
             .unwrap_or(0),
         value,
     }
@@ -854,7 +908,7 @@ fn build_line(
     values: &BTreeMap<String, MeasureValue>,
 ) -> LineMeter {
     let line_count = opt(options, variables, "LineCount")
-        .map(|value| read_u32(&value, 1))
+        .map(|value| read_number_u32(&value, 1))
         .unwrap_or(1)
         .clamp(1, 9);
     let measure_names = collect_numbered(options, variables, "MeasureName");
@@ -872,7 +926,7 @@ fn build_line(
         );
         scales.push(
             opt(options, variables, &scale_key)
-                .map(|value| read_f32(&value, 1.0))
+                .map(|value| read_number_f32(&value, 1.0))
                 .unwrap_or(1.0),
         );
         line_values.push(
@@ -895,11 +949,11 @@ fn build_line(
             .map(|value| read_bool(&value, false))
             .unwrap_or(false),
         line_width: opt(options, variables, "LineWidth")
-            .map(|value| read_f32(&value, 1.0))
+            .map(|value| read_number_f32(&value, 1.0))
             .unwrap_or(1.0)
             .max(0.0),
         horizontal_lines: opt(options, variables, "HorizontalLines")
-            .map(|value| read_u32(&value, 0))
+            .map(|value| read_number_u32(&value, 0))
             .unwrap_or(0),
         horizontal_color: opt(options, variables, "HorizontalColor")
             .or_else(|| opt(options, variables, "HorizontalLineColor"))
@@ -953,19 +1007,19 @@ fn build_rotator(
             .filter(|value| !value.trim().is_empty())
             .and_then(|value| resolve_asset(skin, value.trim(), &IMAGE_EXTENSIONS)),
         offset_x: opt(options, variables, "OffsetX")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
         offset_y: opt(options, variables, "OffsetY")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
         start_angle: opt(options, variables, "StartAngle")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
         rotation_angle: opt(options, variables, "RotationAngle")
-            .map(|value| read_f32(&value, std::f32::consts::TAU))
+            .map(|value| read_number_f32(&value, std::f32::consts::TAU))
             .unwrap_or(std::f32::consts::TAU),
         value_remainder: opt(options, variables, "ValueRemainder")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
         value: measure_ratio(values, measure.as_deref()),
     }
@@ -979,24 +1033,24 @@ fn build_roundline(
     let measure = first_measure_name(options, variables);
     RoundLineMeter {
         line_width: opt(options, variables, "LineWidth")
-            .map(|value| read_f32(&value, 1.0))
+            .map(|value| read_number_f32(&value, 1.0))
             .unwrap_or(1.0)
             .max(0.0),
         line_length: opt(options, variables, "LineLength")
-            .map(|value| read_f32(&value, 20.0))
+            .map(|value| read_number_f32(&value, 20.0))
             .unwrap_or(20.0)
             .max(0.0),
         line_start: opt(options, variables, "LineStart")
-            .map(|value| read_f32(&value, -1.0))
+            .map(|value| read_number_f32(&value, -1.0))
             .unwrap_or(-1.0),
         start_angle: opt(options, variables, "StartAngle")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
         rotation_angle: opt(options, variables, "RotationAngle")
-            .map(|value| read_f32(&value, std::f32::consts::TAU))
+            .map(|value| read_number_f32(&value, std::f32::consts::TAU))
             .unwrap_or(std::f32::consts::TAU),
         value_remainder: opt(options, variables, "ValueRemainder")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
         line_color: opt(options, variables, "LineColor")
             .map(|value| read_color(&value, Color::BLACK))
@@ -1014,10 +1068,10 @@ fn build_roundline(
             .map(|value| read_bool(&value, false))
             .unwrap_or(false),
         start_shift: opt(options, variables, "StartShift")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
         length_shift: opt(options, variables, "LengthShift")
-            .map(|value| read_f32(&value, 0.0))
+            .map(|value| read_number_f32(&value, 0.0))
             .unwrap_or(0.0),
         value: measure_ratio(values, measure.as_deref()),
     }
@@ -1047,23 +1101,23 @@ fn build_bitmap(
             .filter(|value| !value.trim().is_empty())
             .and_then(|value| resolve_asset(skin, value.trim(), &IMAGE_EXTENSIONS)),
         frames: opt(options, variables, "BitmapFrames")
-            .map(|value| read_u32(&value, 1))
+            .map(|value| read_number_u32(&value, 1))
             .unwrap_or(1)
             .max(1),
         zero_frame: opt(options, variables, "BitmapZeroFrame")
             .map(|value| read_bool(&value, false))
             .unwrap_or(false),
         separation: opt(options, variables, "BitmapSeparation")
-            .map(|value| read_u32(&value, 0))
+            .map(|value| read_number_u32(&value, 0))
             .unwrap_or(0),
         extend: opt(options, variables, "BitmapExtend")
             .map(|value| read_bool(&value, false))
             .unwrap_or(false),
         digits: opt(options, variables, "BitmapDigits")
-            .map(|value| read_u32(&value, 0))
+            .map(|value| read_number_u32(&value, 0))
             .unwrap_or(0),
         transition_frames: opt(options, variables, "BitmapTransitionFrames")
-            .map(|value| read_u32(&value, 0))
+            .map(|value| read_number_u32(&value, 0))
             .unwrap_or(0),
         align: opt(options, variables, "BitmapAlign")
             .unwrap_or_else(|| "LEFT".to_string())
@@ -1090,7 +1144,7 @@ fn build_shape(options: &[(String, String)], variables: &Variables) -> ShapeMete
         .map(|value| read_color(&value, Color::WHITE));
     let stroke_width = opt(options, variables, "StrokeWidth")
         .or_else(|| opt(options, variables, "LineWidth"))
-        .map(|value| read_f32(&value, 0.0))
+        .map(|value| read_number_f32(&value, 0.0))
         .unwrap_or(0.0);
     let stroke_dash = opt(options, variables, "StrokeDash")
         .or_else(|| opt(options, variables, "LineDash"))
@@ -1200,7 +1254,7 @@ fn parse_shape_part(value: &str, fill: Color, stroke: Color, stroke_width: f32) 
         } else if let Some(value) = tail("fill color").or_else(|| tail("fillcolor")) {
             part.fill_color = Some(read_color(value, fill));
         } else if let Some(value) = tail("stroke width").or_else(|| tail("strokewidth")) {
-            part.stroke_width = Some(read_f32(value, stroke_width));
+            part.stroke_width = Some(read_number_f32(value, stroke_width));
         } else if let Some(value) = tail("stroke color2").or_else(|| tail("strokecolor2")) {
             part.stroke_color2 = Some(read_color(value, stroke));
         } else if let Some(value) = tail("stroke color").or_else(|| tail("strokecolor")) {
@@ -1333,7 +1387,7 @@ fn collect_local_fonts(skin: &Skin) -> Vec<PathBuf> {
         }
     }
 
-    let fonts_dir = skin.root.join("@Resources").join("Fonts");
+    let fonts_dir = crate::include::find_resources_root(&skin.root).join("Fonts");
     if let Ok(entries) = std::fs::read_dir(&fonts_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -1352,10 +1406,47 @@ fn collect_local_fonts(skin: &Skin) -> Vec<PathBuf> {
     fonts
 }
 
+fn resolve_asset_dir(skin: &Skin, value: &str) -> Option<PathBuf> {
+    let translated = crate::compat::translate_path_checked(value)?;
+    let candidate = if let Some(relative) = translated.strip_prefix("@Resources/") {
+        crate::include::find_resources_root(&skin.root).join(relative)
+    } else {
+        let path = PathBuf::from(translated);
+        if path.is_absolute() {
+            path
+        } else {
+            skin.root.join(path)
+        }
+    };
+    candidate.is_dir().then_some(candidate)
+}
+
+fn collect_image_variants(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut variants: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    IMAGE_EXTENSIONS
+                        .iter()
+                        .any(|known| known.eq_ignore_ascii_case(extension))
+                })
+        })
+        .collect();
+    variants.sort();
+    variants
+}
+
 fn resolve_asset(skin: &Skin, value: &str, extensions: &[&str]) -> Option<PathBuf> {
     let translated = crate::compat::translate_path_checked(value)?;
     let candidate = if let Some(relative) = translated.strip_prefix("@Resources/") {
-        skin.root.join("@Resources").join(relative)
+        crate::include::find_resources_root(&skin.root).join(relative)
     } else {
         let path = PathBuf::from(translated);
         if path.is_absolute() {

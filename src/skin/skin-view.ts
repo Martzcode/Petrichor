@@ -61,7 +61,7 @@ export class SkinView implements AfterViewInit, OnDestroy {
   private path = '';
   private model: RenderModel | null = null;
   private layout: SkinLayout | null = null;
-  private images = new Map<string, HTMLImageElement>();
+  private images = new Map<string, CanvasImageSource>();
   private alphaMaps = new Map<string, ImageData | null>();
   private histories: MeterHistories = new Map();
   private transitions = new Map<string, MeterTransition>();
@@ -173,14 +173,14 @@ export class SkinView implements AfterViewInit, OnDestroy {
     const layout = this.render();
     this.lastSize = { width: layout.width, height: layout.height };
     await this.ipc.applySkinWindowFlags(label, result.flags);
-    if (result.model.dynamic_window_size) {
-      await this.ipc.fitSkinWindow(label, layout.width, layout.height);
-    }
     await this.ipc.logBackend(
       'notice',
       `Skin ${result.model.name} rendu (${layout.width}×${layout.height})`,
     );
     await this.showWindow();
+    if (result.model.dynamic_window_size) {
+      await this.ipc.fitSkinWindow(label, layout.width, layout.height);
+    }
     if (result.model.on_refresh_action) {
       await this.execute(result.model.on_refresh_action);
     }
@@ -455,8 +455,9 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
     const image = this.images.get(meter.image);
     if (!image) return true;
-    const width = image.naturalWidth || image.width;
-    const height = image.naturalHeight || image.height;
+    const element = image as HTMLImageElement;
+    const width = element.naturalWidth || element.width;
+    const height = element.naturalHeight || element.height;
     if (width <= 0 || height <= 0) return true;
 
     const data = this.alphaData(meter.image, image, width, height);
@@ -477,7 +478,7 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
   private alphaData(
     path: string,
-    image: HTMLImageElement,
+    image: CanvasImageSource,
     width: number,
     height: number,
   ): ImageData | null {
@@ -737,6 +738,7 @@ export class SkinView implements AfterViewInit, OnDestroy {
         transitions: this.transitions,
         now:
           typeof performance === 'undefined' ? Date.now() : performance.now(),
+        values: model.measure_values,
       },
     );
     return layout;
@@ -761,16 +763,37 @@ export class SkinView implements AfterViewInit, OnDestroy {
   }
 
   private imageSize(
-    images: Map<string, HTMLImageElement>,
+    images: Map<string, CanvasImageSource>,
     meter: SizedMeter,
   ): { width: number; height: number } | null {
-    if (!meter.image) return null;
-    const image = images.get(meter.image);
+    const path = this.meterImagePath(meter);
+    if (!path) return null;
+    const image = images.get(path);
     if (!image) return null;
+    const element = image as HTMLImageElement;
     return {
-      width: image.naturalWidth || image.width,
-      height: image.naturalHeight || image.height,
+      width: element.naturalWidth || element.width,
+      height: element.naturalHeight || element.height,
     };
+  }
+
+  private meterImagePath(meter: SizedMeter): string | null {
+    if (meter.image) return meter.image;
+    if (meter.type !== 'image' || !this.model) return null;
+    const measure = meter.image_measure;
+    if (!measure) return null;
+    const values = this.model.measure_values;
+    const key = Object.keys(values).find(
+      (candidate) => candidate.toLowerCase() === measure.toLowerCase(),
+    );
+    const raw = key ? values[key].trim().toLowerCase() : '';
+    if (!raw) return null;
+    for (const variant of meter.image_variants ?? []) {
+      const file = variant.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+      const stem = file.replace(/\.[^.]+$/, '');
+      if (file === raw || stem === raw) return variant;
+    }
+    return null;
   }
 
   private applyBlur(enabled: boolean): void {
@@ -787,10 +810,17 @@ export class SkinView implements AfterViewInit, OnDestroy {
     for (const path of model.local_fonts) {
       try {
         const url = await this.ipc.assetUrl(path);
-        const family = fontFamily(path);
-        const face = new FontFace(family, `url("${url}")`);
-        await face.load();
-        document.fonts.add(face);
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const objectUrl = URL.createObjectURL(await response.blob());
+        try {
+          const family = fontFamily(path);
+          const face = new FontFace(family, `url("${objectUrl}")`);
+          await face.load();
+          document.fonts.add(face);
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
       } catch {
         continue;
       }
@@ -799,13 +829,15 @@ export class SkinView implements AfterViewInit, OnDestroy {
 
   private async loadImages(
     model: RenderModel,
-  ): Promise<Map<string, HTMLImageElement>> {
+  ): Promise<Map<string, CanvasImageSource>> {
     const paths = new Set<string>();
     if (model.background.image) paths.add(model.background.image);
     for (const meter of model.meters) {
-      if (
-        (meter.type === 'image' ||
-          meter.type === 'rotator' ||
+      if (meter.type === 'image') {
+        if (meter.image) paths.add(meter.image);
+        for (const variant of meter.image_variants ?? []) paths.add(variant);
+      } else if (
+        (meter.type === 'rotator' ||
           meter.type === 'bitmap' ||
           meter.type === 'button') &&
         meter.image
@@ -814,15 +846,15 @@ export class SkinView implements AfterViewInit, OnDestroy {
       }
     }
 
-    const images = new Map<string, HTMLImageElement>();
+    const images = new Map<string, CanvasImageSource>();
     await Promise.all(
       [...paths].map(async (path) => {
         try {
           const url = await this.ipc.assetUrl(path);
-          const image = new Image();
-          image.src = url;
-          await image.decode();
-          images.set(path, image);
+          const response = await fetch(url);
+          if (!response.ok) return;
+          const bitmap = await createImageBitmap(await response.blob());
+          images.set(path, bitmap);
         } catch {
           return;
         }

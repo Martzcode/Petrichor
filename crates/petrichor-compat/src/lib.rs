@@ -433,7 +433,16 @@ fn analyze_measure(
                 return;
             }
             let module = petrichor_core::plugins::plugin_module_name(requested);
-            if petrichor_core::plugins::create_builtin(&module).is_none() {
+            if petrichor_core::plugins::native_measure_kind(&module).is_some() {
+                report.record(
+                    "plugin",
+                    requested,
+                    Some("mesure native".to_string()),
+                    CompatLevel::Automatic,
+                    Some(Plan::A),
+                    Some("Plugin intégré pris en charge nativement.".to_string()),
+                );
+            } else if petrichor_core::plugins::create_builtin(&module).is_none() {
                 let fallback = find_native_plugin(&module, requested);
                 if fallback {
                     report.record(
@@ -1120,6 +1129,19 @@ mod tests {
             .iter()
             .any(|entry| entry.feature == "font" && entry.level == CompatLevel::Automatic));
         assert!(report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "plugin" && entry.level == CompatLevel::Unsupported));
+    }
+
+    #[test]
+    fn accepts_native_plugin_measures() {
+        let (_directory, path) = skin_file(
+            "[MeasureNet]\nMeasure=Plugin\nPlugin=SysInfo\nSysInfoType=INTERNET_CONNECTIVITY\n             [MeasureWeb]\nMeasure=Plugin\nPlugin=WebParser.dll\nUrl=http://example.org/\n",
+        );
+        let (skin, _) = petrichor_core::build_skin(&path);
+        let report = analyze_skin_with(&skin, &Mappings::builtin(), &detect_capabilities());
+        assert!(!report
             .entries
             .iter()
             .any(|entry| entry.feature == "plugin" && entry.level == CompatLevel::Unsupported));

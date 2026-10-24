@@ -1019,6 +1019,14 @@ fn split_arguments(input: &str) -> Vec<String> {
     arguments
 }
 
+pub fn native_measure_kind(name: &str) -> Option<&'static str> {
+    match plugin_module_name(name).to_ascii_lowercase().as_str() {
+        "sysinfo" => Some("SYSINFO"),
+        "webparser" => Some("WEBPARSER"),
+        _ => None,
+    }
+}
+
 pub fn create_builtin(name: &str) -> Option<Box<dyn RuntimeMeasure>> {
     match name.to_ascii_lowercase().as_str() {
         "runcommand" => Some(Box::new(RunCommandMeasure::default())),

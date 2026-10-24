@@ -80,6 +80,9 @@ export interface StringMeter extends CommonMeter {
 export interface ImageMeter extends CommonMeter {
   type: 'image';
   image: string | null;
+  image_path?: string | null;
+  image_measure?: string | null;
+  image_variants?: string[];
   preserve_aspect_ratio: number;
   tile: boolean;
   scale_margins: [number, number, number, number];

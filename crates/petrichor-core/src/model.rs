@@ -128,6 +128,12 @@ impl Default for SkinSettings {
 impl SkinSettings {
     pub fn from_section(section: &crate::ini::IniSection) -> SkinSettings {
         let mut settings = SkinSettings::default();
+        settings.apply_section(section);
+        settings
+    }
+
+    pub fn apply_section(&mut self, section: &crate::ini::IniSection) {
+        let settings = self;
 
         if let Some(value) = section.get("Update") {
             settings.update_ms = read_u32(value, settings.update_ms).max(1);
@@ -206,8 +212,6 @@ impl SkinSettings {
                     .insert(entry.key[7..].to_string(), entry.value.clone());
             }
         }
-
-        settings
     }
 }
 
@@ -246,7 +250,7 @@ impl OptionEntry {
             .iter()
             .map(|e| OptionEntry {
                 key: e.key.clone(),
-                value: e.value.clone(),
+                value: crate::ini::unquote(&e.value),
                 line: e.line,
             })
             .collect()
@@ -415,10 +419,13 @@ fn build_skin_from_resolved(
         .map(Metadata::from_section)
         .unwrap_or_default();
 
-    let settings = document
-        .section("Petrichor")
+    let mut settings = document
+        .section("Rainmeter")
         .map(SkinSettings::from_section)
         .unwrap_or_default();
+    if let Some(section) = document.section("Petrichor") {
+        settings.apply_section(section);
+    }
 
     let mut measures = Vec::new();
     let mut meters = Vec::new();
@@ -589,6 +596,21 @@ Text=%1
     }
 
     #[test]
+    fn strips_quotes_from_option_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Clock.ini");
+        fs::write(
+            &path,
+            "[MeasureTime]\nMeasure=Time\nFormat=\"%H:%M\"\n\n[MeterLabel]\nMeter=String\nText=\"%1\"\n",
+        )
+        .unwrap();
+        let (skin, _) = build_skin(&path);
+
+        assert_eq!(skin.measures[0].options.get("Format"), Some("%H:%M"));
+        assert_eq!(skin.meters[0].options.get("Text"), Some("%1"));
+    }
+
+    #[test]
     fn parses_metadata_and_variables() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Clock.ini");
@@ -598,6 +620,22 @@ Text=%1
         assert_eq!(skin.metadata.name.as_deref(), Some("Horloge"));
         assert_eq!(skin.metadata.author.as_deref(), Some("Alice"));
         assert_eq!(skin.variable("Primary"), Some("FF8800"));
+    }
+
+    #[test]
+    fn parses_rainmeter_settings_with_petrichor_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Clock.ini");
+        fs::write(
+            &path,
+            "[Rainmeter]\nUpdate=250\nDynamicWindowSize=1\nAccurateText=1\n\n[Petrichor]\nUpdate=500\n",
+        )
+        .unwrap();
+        let (skin, _) = build_skin(&path);
+
+        assert_eq!(skin.settings.update_ms, 500);
+        assert!(skin.settings.dynamic_window_size);
+        assert!(skin.settings.accurate_text);
     }
 
     #[test]

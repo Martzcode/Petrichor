@@ -1,4 +1,4 @@
-import { MeterBox, PlacedRun, SkinLayout } from './layout';
+import { lookup, MeterBox, PlacedRun, SkinLayout } from './layout';
 import { baseStyle, TextStyle } from './inline';
 import {
   Background,
@@ -33,6 +33,7 @@ export interface RenderState {
   pressed: string | null;
   transitions?: Map<string, MeterTransition>;
   now?: number;
+  values?: Record<string, string>;
 }
 
 const NO_STATE: RenderState = { hovered: null, pressed: null };
@@ -192,7 +193,7 @@ function drawMeter(
       drawString(ctx, box);
       break;
     case 'image':
-      drawImageMeter(ctx, box, getImage);
+      drawImageMeter(ctx, box, getImage, state);
       break;
     case 'bar':
       drawBar(ctx, box);
@@ -267,6 +268,20 @@ function drawTextRun(
   const fill = runFill(ctx, run);
   const text = run.text;
   const spacing = run.style.spacing;
+  let textY = baselineY;
+  if (baseline === 'top') {
+    const metrics = ctx.measureText(text);
+    const glyphAscent = metrics.actualBoundingBoxAscent;
+    const emAscent = metrics.fontBoundingBoxAscent;
+    if (
+      glyphAscent !== undefined &&
+      emAscent !== undefined &&
+      Number.isFinite(glyphAscent) &&
+      Number.isFinite(emAscent)
+    ) {
+      textY -= Math.max(0, emAscent - glyphAscent);
+    }
+  }
 
   if (run.style.shadow) {
     const shadow = run.style.shadow;
@@ -276,22 +291,22 @@ function drawTextRun(
     ctx.shadowOffsetX = shadow.offsetX;
     ctx.shadowOffsetY = shadow.offsetY;
     ctx.shadowBlur = shadow.blur;
-    drawRunText(ctx, text, run, baselineY, spacing);
+    drawRunText(ctx, text, run, textY, spacing);
     ctx.restore();
   }
 
   ctx.fillStyle = fill;
-  drawRunText(ctx, text, run, baselineY, spacing);
+  drawRunText(ctx, text, run, textY, spacing);
 
   if (run.style.underline || run.style.strikethrough) {
     ctx.fillStyle = cssColor(run.style.color);
     const size = run.style.size;
     const top =
       baseline === 'top'
-        ? baselineY
+        ? textY
         : baseline === 'middle'
-          ? baselineY - size / 2
-          : baselineY - size;
+          ? textY - size / 2
+          : textY - size;
     const thickness = Math.max(1, size / 14);
     if (run.style.underline) {
       ctx.fillRect(run.x, top + size * 0.94, run.width, thickness);
@@ -350,14 +365,32 @@ function runFill(
   return fill;
 }
 
+function dynamicImagePath(
+  meter: ImageMeter,
+  values: Record<string, string>,
+): string | null {
+  const measure = meter.image_measure;
+  if (!measure) return null;
+  const raw = lookup(values, measure).trim().toLowerCase();
+  if (!raw) return null;
+  for (const variant of meter.image_variants ?? []) {
+    const file = variant.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+    const stem = file.replace(/\.[^.]+$/, '');
+    if (file === raw || stem === raw) return variant;
+  }
+  return null;
+}
+
 function drawImageMeter(
   ctx: CanvasRenderingContext2D,
   box: MeterBox,
   getImage: ImageSourceFn,
+  state: RenderState,
 ): void {
   const meter = box.meter as ImageMeter;
-  if (!meter.image) return;
-  const loaded = getImage(meter.image);
+  const path = meter.image ?? dynamicImagePath(meter, state.values ?? {});
+  if (!path) return;
+  const loaded = getImage(path);
   if (!loaded) return;
 
   const width = imageWidth(loaded);

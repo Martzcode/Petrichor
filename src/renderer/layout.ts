@@ -107,14 +107,14 @@ function applyCase(value: string, mode: string): string {
 
 function resolveAxis(
   dimension: Dimension,
-  previousStart: number,
-  previousSize: number,
+  previousAnchor: number,
+  previousEdge: number,
 ): number {
   switch (dimension.relative) {
     case 'position':
-      return previousStart + dimension.value;
+      return previousAnchor + dimension.value;
     case 'edge':
-      return previousStart + previousSize + dimension.value;
+      return previousEdge + dimension.value;
     default:
       return dimension.value;
   }
@@ -172,6 +172,7 @@ function horizontalAlign(value: string): 'left' | 'center' | 'right' {
 function verticalBaseline(value: string): 'top' | 'middle' | 'bottom' {
   const upper = value.toUpperCase();
   if (upper.includes('BOTTOM')) return 'bottom';
+  if (upper === 'CENTER' || upper === 'CENTERTOP') return 'top';
   if (upper.includes('CENTER') || upper.includes('MIDDLE')) return 'middle';
   return 'top';
 }
@@ -218,14 +219,14 @@ export function layoutSkin(
   const boxes: MeterBox[] = [];
   let previousX = 0;
   let previousY = 0;
-  let previousWidth = 0;
-  let previousHeight = 0;
+  let previousRight = 0;
+  let previousBottom = 0;
   let maxRight = 0;
   let maxBottom = 0;
 
   for (const meter of model.meters) {
-    const x = resolveAxis(meter.x, previousX, previousWidth);
-    const y = resolveAxis(meter.y, previousY, previousHeight);
+    const x = resolveAxis(meter.x, previousX, previousRight);
+    const y = resolveAxis(meter.y, previousY, previousBottom);
     const box = layoutMeter(
       meter,
       x,
@@ -235,12 +236,24 @@ export function layoutSkin(
       imageSize,
     );
     boxes.push(box);
-    previousX = box.x;
-    previousY = box.y;
-    previousWidth = box.width;
-    previousHeight = box.height;
-    maxRight = Math.max(maxRight, box.x + box.width);
-    maxBottom = Math.max(maxBottom, box.y + box.height);
+    const align =
+      meter.type === 'string' ? horizontalAlign(meter.string_align) : 'left';
+    const baseline =
+      meter.type === 'string' ? verticalBaseline(meter.string_align) : 'top';
+    previousX =
+      box.x +
+      (align === 'center' ? box.width / 2 : align === 'right' ? box.width : 0);
+    previousY =
+      box.y +
+      (baseline === 'middle'
+        ? box.height / 2
+        : baseline === 'bottom'
+          ? box.height
+          : 0);
+    previousRight = box.x + box.width;
+    previousBottom = box.y + box.height;
+    maxRight = Math.max(maxRight, previousRight);
+    maxBottom = Math.max(maxBottom, previousBottom);
   }
 
   applyContainers(boxes);
@@ -423,12 +436,42 @@ function layoutMeter(
     contentHeight = extent.height;
   }
 
-  const width = meter.width ?? Math.max(0, contentWidth + padWidth);
-  const height = meter.height ?? Math.max(0, contentHeight + padHeight);
+  let width = meter.width ?? Math.max(0, contentWidth + padWidth);
+  let height = meter.height ?? Math.max(0, contentHeight + padHeight);
+  if (
+    meter.type === 'image' &&
+    contentWidth > 0 &&
+    contentHeight > 0 &&
+    meter.width !== null &&
+    meter.height === null
+  ) {
+    height =
+      ((meter.width - padWidth) * contentHeight) / contentWidth + padHeight;
+  } else if (
+    meter.type === 'image' &&
+    contentWidth > 0 &&
+    contentHeight > 0 &&
+    meter.height !== null &&
+    meter.width === null
+  ) {
+    width =
+      ((meter.height - padHeight) * contentWidth) / contentHeight + padWidth;
+  }
+
+  let boxX = x;
+  let boxY = y;
+  if (meter.type === 'string') {
+    const align = horizontalAlign(meter.string_align);
+    const baseline = verticalBaseline(meter.string_align);
+    if (align === 'center') boxX = x - width / 2;
+    else if (align === 'right') boxX = x - width;
+    if (baseline === 'middle') boxY = y - height / 2;
+    else if (baseline === 'bottom') boxY = y - height;
+  }
 
   const content = {
-    x: x + padLeft,
-    y: y + padTop,
+    x: boxX + padLeft,
+    y: boxY + padTop,
     width: Math.max(0, width - padWidth),
     height: Math.max(0, height - padHeight),
   };
@@ -459,8 +502,8 @@ function layoutMeter(
 
   return {
     meter,
-    x,
-    y,
+    x: boxX,
+    y: boxY,
     width: Math.ceil(width),
     height: Math.ceil(height),
     content,

@@ -99,6 +99,12 @@ impl Variables {
                 }
             }
 
+            if ch == '#' && chars.get(i + 1) == Some(&'@') && chars.get(i + 2) == Some(&'#') {
+                output.push_str("@Resources/");
+                i += 3;
+                continue;
+            }
+
             if ch == '#' {
                 if let Some(offset) = find_char(&chars, i + 1, '#') {
                     let name: String = chars[i + 1..i + 1 + offset].iter().collect();
@@ -317,6 +323,15 @@ mod tests {
         let expanded = vars.expand("%USERPROFILE%/Skins");
         assert!(!expanded.contains('%'));
         assert!(expanded.ends_with("/Skins"));
+    }
+
+    #[test]
+    fn expands_resources_prefix() {
+        let vars = Variables::new();
+        assert_eq!(
+            vars.expand("#@#Images/logo.png"),
+            "@Resources/Images/logo.png"
+        );
     }
 
     #[test]

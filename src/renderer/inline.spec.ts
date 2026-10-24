@@ -1,4 +1,4 @@
-import { buildTextRuns, parseColor } from './inline';
+import { buildTextRuns, parseColor, POINTS_TO_PIXELS } from './inline';
 import { StringMeter } from './skin-model';
 
 function meter(overrides: Partial<StringMeter> = {}): StringMeter {
@@ -61,9 +61,9 @@ describe('buildTextRuns', () => {
       'CPU: 42%',
     );
     expect(runs.map((run) => run.text)).toEqual(['CPU: ', '42', '%']);
-    expect(runs[1].style.size).toBe(20);
-    expect(runs[0].style.size).toBe(12);
-    expect(runs[2].style.size).toBe(12);
+    expect(runs[1].style.size).toBe(20 * POINTS_TO_PIXELS);
+    expect(runs[0].style.size).toBe(12 * POINTS_TO_PIXELS);
+    expect(runs[2].style.size).toBe(12 * POINTS_TO_PIXELS);
   });
 
   it('applies case and merges styles', () => {
@@ -78,6 +78,19 @@ describe('buildTextRuns', () => {
     expect(runs[0].style.weight).toBe(800);
     expect(runs[0].style.underline).toBe(true);
     expect(runs[1].text).toBe(' world');
+  });
+
+  it('applies a setting without a pattern to the whole string', () => {
+    const runs = buildTextRuns(
+      meter({ inline_settings: ['CharacterSpacing | 10 | 10'] }),
+      'Hello',
+    );
+    expect(runs).toHaveLength(1);
+    expect(runs[0].style.spacing).toEqual({
+      leading: 10,
+      trailing: 10,
+      advance: null,
+    });
   });
 
   it('ignores invalid settings and patterns', () => {

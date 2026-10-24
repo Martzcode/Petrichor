@@ -205,6 +205,9 @@ fn window_handle(
     let Some(window) = app.get_webview_window(&label) else {
         return 0;
     };
+    if !window.is_visible().unwrap_or(false) {
+        return 0;
+    }
     match window.window_handle().map(|handle| handle.as_raw()) {
         Ok(RawWindowHandle::Xlib(handle)) => handle.window,
         Ok(RawWindowHandle::Xcb(handle)) => u64::from(handle.window.get()),
